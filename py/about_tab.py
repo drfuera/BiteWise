@@ -32,17 +32,17 @@ class AboutTab(Gtk.Box):
         try:
             icon_path = Path(__file__).parent / "../db/icon.png"
             if icon_path.exists():
-                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(str(icon_path), 80, 80)  # Larger icon
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(str(icon_path), 80, 80)
                 image = Gtk.Image.new_from_pixbuf(pixbuf)
                 logo_box.pack_start(image, False, False, 0)
         except Exception as e:
             print(f"Error loading icon: {e}")
         
-        # Application title - made significantly larger
+        # Application title
         title_label = Gtk.Label()
-        title_label.set_markup("<span size='400%' weight='ultrabold'>BiteWise</span>")  # 300% larger than default
+        title_label.set_markup("<span size='400%' weight='ultrabold'>BiteWise</span>")
         title_label.set_margin_bottom(0)
-        logo_box.pack_start(title_label, False, False, 15)  # Increased spacing
+        logo_box.pack_start(title_label, False, False, 15)
         main_box.pack_start(logo_box, False, False, 0)
         
         # Description
@@ -59,20 +59,27 @@ class AboutTab(Gtk.Box):
         
         # Info grid
         grid = Gtk.Grid()
-        grid.set_column_spacing(10)
-        grid.set_row_spacing(10)
+        grid.set_column_spacing(5)
+        grid.set_row_spacing(8)
         grid.set_margin_bottom(20)
         grid.set_halign(Gtk.Align.CENTER)
         
         # Version
         self._add_grid_row(grid, 0, "Version:", "1.0.0")
         # Author
-        self._add_grid_row(grid, 1, "Author:", "Your Name")
-        # Email
-        email_label = self._add_grid_row(grid, 2, "Contact:", "your.email@example.com")
-        email_label.connect("activate-link", self._on_email_clicked)
+        self._add_grid_row(grid, 1, "Author:", "Andrej Fuera")
+        # Session ID
+        session_hash = "059f23cccb1d94d83c45d1d83f1e9f33ba3d14ff95751159f9b6a4d223b279005b"
+        session_label = Gtk.Label()
+        session_label.set_markup(
+            f"<a href='{session_hash}' title='Click to copy'>{session_hash}</a>\n"
+            f"<a href='https://getsession.org/'>https://getsession.org</a>"
+        )
+        session_label.set_xalign(0)
+        session_label.connect("activate-link", self._on_session_id_clicked)
+        self._add_grid_custom_widget(grid, 2, "Session ID:", session_label)
         # GitHub
-        github_label = self._add_grid_row(grid, 3, "GitHub:", "github.com/yourusername/bitewise")
+        github_label = self._add_grid_row(grid, 3, "GitHub:", "https://github.com/drfuera/BiteWise")
         github_label.connect("activate-link", self._on_github_clicked)
         
         main_box.pack_start(grid, False, False, 0)
@@ -85,30 +92,58 @@ class AboutTab(Gtk.Box):
         license_label.set_margin_top(20)
         main_box.pack_start(license_label, False, False, 0)
         
-        # Show all
         self.show_all()
-    
+
     def _add_grid_row(self, grid, row, label_text, value_text):
         label = Gtk.Label(label=label_text)
         label.set_halign(Gtk.Align.END)
-        label.set_margin_right(10)
+        label.set_margin_right(5)
         grid.attach(label, 0, row, 1, 1)
         
-        if value_text.startswith(('http://', 'https://', 'mailto:')):
+        if value_text.startswith(('http://', 'https://')):
             value_label = Gtk.Label()
             value_label.set_markup(f"<a href='{value_text}'>{value_text}</a>")
             value_label.set_halign(Gtk.Align.START)
+            value_label.set_xalign(0)
         else:
             value_label = Gtk.Label(label=value_text)
             value_label.set_halign(Gtk.Align.START)
+            value_label.set_xalign(0)
         
         grid.attach(value_label, 1, row, 1, 1)
         return value_label
-    
-    def _on_email_clicked(self, label, uri):
-        webbrowser.open(f"mailto:{uri}")
+
+    def _add_grid_custom_widget(self, grid, row, label_text, widget):
+        label = Gtk.Label(label=label_text)
+        label.set_halign(Gtk.Align.END)
+        label.set_margin_right(5)
+        grid.attach(label, 0, row, 1, 1)
+        widget.set_halign(Gtk.Align.START)
+        widget.set_xalign(0)
+        grid.attach(widget, 1, row, 1, 1)
+        return widget
+
+    def _on_session_id_clicked(self, label, uri):
+        if uri.startswith('http'):
+            webbrowser.open(uri)
+            return True
+        
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clipboard.set_text(uri, -1)
+        clipboard.store()
+        
+        dialog = Gtk.MessageDialog(
+            transient_for=self.get_toplevel(),
+            flags=0,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text="Copied to clipboard"
+        )
+        dialog.format_secondary_text(f"Session ID: {uri}")
+        dialog.run()
+        dialog.destroy()
         return True
-    
+
     def _on_github_clicked(self, label, uri):
-        webbrowser.open(f"https://{uri}")
+        webbrowser.open(uri)
         return True
