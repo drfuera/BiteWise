@@ -18,10 +18,10 @@ class IngredientsTab(Gtk.Box):
         self.ingredients_tree = Gtk.TreeView(model=self.ingredients_store)
         self._create_columns([
             ("Ingredient", 0.5), ("Kcal", 0.07), ("Carbs", 0.07), ("Sugar", 0.07),
-            ("Fat", 0.07), ("Protein", 0.07), ("Fiber", 0.07), ("Salt", 0.07), ("Cost", 0.04)
+            ("Fat", 0.07), ("Protein", 0.07), ("Fiber", 0.07), ("Salt", 0.07), ("Cost/hg", 0.04)
         ])
 
-        # Aktivera multival med Shift/Ctrl-klick
+        # Enable multi-select with Shift/Ctrl-click
         self.ingredients_tree.get_selection().set_mode(Gtk.SelectionMode.MULTIPLE)
 
         scrolled_window = Gtk.ScrolledWindow()
@@ -88,13 +88,13 @@ class IngredientsTab(Gtk.Box):
         if not paths:
             return
             
-        # Skapa lista med namn på alla markerade ingredienser
+        # Create list of all selected ingredient names
         ingredient_names = []
         for path in paths:
             treeiter = model.get_iter(path)
             ingredient_names.append(model.get_value(treeiter, 0))
         
-        # Bekräfta borttagning
+        # Confirm deletion
         dialog = Gtk.MessageDialog(
             transient_for=self.get_toplevel(),
             flags=0,
@@ -107,12 +107,12 @@ class IngredientsTab(Gtk.Box):
         dialog.destroy()
         
         if response == Gtk.ResponseType.YES:
-            # Ta bort från modellen i omvänd ordning för att undvika indexproblem
+            # Remove from model in reverse order to avoid index issues
             for path in sorted(paths, reverse=True):
                 treeiter = model.get_iter(path)
                 model.remove(treeiter)
             
-            # Uppdatera datalistan
+            # Update data list
             self.ingredients_data = [
                 i for i in self.ingredients_data 
                 if i['name'] not in ingredient_names
@@ -127,7 +127,7 @@ class IngredientsTab(Gtk.Box):
     def on_update_clicked(self, widget):
         selection = self.ingredients_tree.get_selection()
         model, paths = selection.get_selected_rows()
-        if paths and len(paths) == 1:  # Endast uppdatera om en rad är vald
+        if paths and len(paths) == 1:  # Only update if one row is selected
             treeiter = model.get_iter(paths[0])
             self._show_ingredient_dialog(
                 title="Update Ingredient",
@@ -138,7 +138,7 @@ class IngredientsTab(Gtk.Box):
     def on_add_clicked(self, widget):
         self._show_ingredient_dialog(
             title="Add New Ingredient",
-            values=[""] + [""] * 8,
+            values=[""] + [0.0] * 8,
             is_update=False
         )
 
@@ -193,7 +193,7 @@ class IngredientsTab(Gtk.Box):
             entry.set_input_purpose(Gtk.InputPurpose.NUMBER)
             entry.set_width_chars(6)
             entry.set_max_width_chars(8)
-            entry.set_text(str(values[idx]) if values[idx] != "" else "")
+            entry.set_text(str(values[idx]) if values[idx] != 0.0 else "")
             setattr(self, f"entry_{prop_name}", entry)
             input_grid.attach(entry, i, 0, 1, 1)
 
@@ -221,7 +221,7 @@ class IngredientsTab(Gtk.Box):
     def _parse_float(self, text):
         text = text.strip()
         if not text:
-            raise ValueError("Field cannot be empty")
+            return 0.0
         try:
             return float(text.replace(',', '.'))
         except ValueError:
@@ -251,28 +251,37 @@ class IngredientsTab(Gtk.Box):
                 if paths and len(paths) == 1:
                     treeiter = model.get_iter(paths[0])
                     old_name = model.get_value(treeiter, 0)
-                    model.set(treeiter, *[(i, v) for i, v in enumerate(new_values.values())])
                     
+                    # Update the ListStore
+                    for i, value in enumerate(new_values.values()):
+                        model.set_value(treeiter, i, value)
+                    
+                    # Update local data
                     for i, ingredient in enumerate(self.ingredients_data):
                         if ingredient['name'].lower() == old_name.lower():
                             self.ingredients_data[i] = new_values
                             break
                     
+                    # Update recipes if checked
                     if self.update_recipes_check.get_active():
-                        self._update_json_file('recipes.json', 'recipes', old_name, new_values)
-                        if self.recipes_tab:
+                        updated = self._update_recipes(old_name, new_values)
+                        if updated and self.recipes_tab:
                             self.recipes_tab.reload_recipes()
                     
+                    # Update journal if checked
                     if self.update_journal_check.get_active():
-                        self._update_json_file('journal.json', 'entries', old_name, new_values)
-                        if self.journal_tab:
+                        updated = self._update_journal(old_name, new_values)
+                        if updated and self.journal_tab:
                             self.journal_tab.reload_journal()
                             self.journal_tab._refresh_journal_view()
             else:
-                if any(i['name'].lower() == new_name.lower() for i in self.ingredients_data):
+                # Check for existing ingredient
+                existing = next((i for i in self.ingredients_data if i['name'].lower() == new_name.lower()), None)
+                if existing:
                     if not self._confirm_overwrite(new_name):
                         return
-                    self.ingredients_data = [i for i in self.ingredients_data if i['name'].lower() != new_name.lower()]
+                    self.ingredients_data.remove(existing)
+                    # Remove from ListStore
                     for row in self.ingredients_store:
                         if row[0].lower() == new_name.lower():
                             self.ingredients_store.remove(row.iter)
@@ -292,6 +301,57 @@ class IngredientsTab(Gtk.Box):
         except Exception as e:
             self._show_error_dialog(dialog, "Error saving ingredient", str(e))
 
+    def _update_recipes(self, old_name, new_values):
+        try:
+            filepath = os.path.join(self.db_dir, 'recipes.json')
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            updated = False
+            for recipe in data['recipes']:
+                for ingredient in recipe['ingredients']:
+                    if ingredient['name'].lower() == old_name.lower():
+                        # Update the name
+                        ingredient['name'] = new_values['name']
+                        # Recalculate all nutritional values based on grams
+                        grams = ingredient['gram']
+                        for key in ['kcal', 'carbs', 'sugar', 'fat', 'protein', 'fiber', 'salt', 'cost']:
+                            ingredient[key] = new_values[key] * (grams / 100)
+                        updated = True
+            
+            if updated:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+            return updated
+        except Exception as e:
+            print(f"Error updating recipes: {e}")
+            return False
+
+    def _update_journal(self, old_name, new_values):
+        try:
+            filepath = os.path.join(self.db_dir, 'journal.json')
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            updated = False
+            for entry in data['entries']:
+                if entry['ate'].lower() == old_name.lower():
+                    # Update the name
+                    entry['ate'] = new_values['name']
+                    # Recalculate all nutritional values based on grams
+                    grams = entry['gram']
+                    for key in ['kcal', 'carbs', 'sugar', 'fat', 'protein', 'fiber', 'salt', 'cost']:
+                        entry[key] = new_values[key] * (grams / 100)
+                    updated = True
+            
+            if updated:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+            return updated
+        except Exception as e:
+            print(f"Error updating journal: {e}")
+            return False
+
     def _confirm_overwrite(self, name):
         dialog = Gtk.MessageDialog(
             transient_for=self.get_toplevel(),
@@ -304,32 +364,6 @@ class IngredientsTab(Gtk.Box):
         response = dialog.run() == Gtk.ResponseType.YES
         dialog.destroy()
         return response
-
-    def _update_json_file(self, filename, data_key, old_name, new_values):
-        try:
-            filepath = os.path.join(self.db_dir, filename)
-            with open(filepath, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            updated = False
-            for item in data[data_key]:
-                key = 'ate' if data_key == 'entries' else 'name'
-                if item[key].lower() == old_name.lower():
-                    if data_key == 'entries':
-                        grams = item['gram']
-                        for k in ['kcal', 'carbs', 'sugar', 'fat', 'protein', 'fiber', 'salt', 'cost']:
-                            item[k] = new_values[k] * (grams / 100)
-                    else:
-                        item.update(new_values)
-                    updated = True
-            
-            if updated:
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
-            return updated
-        except Exception as e:
-            print(f"Error updating {filename}: {e}")
-            return False
 
     def _show_error_dialog(self, parent, text, secondary_text):
         dialog = Gtk.MessageDialog(
