@@ -7,6 +7,25 @@ import threading
 import gi
 gi.require_version('Gtk', '3.0')
 
+def ensure_db_directory():
+    if 'APPIMAGE' in os.environ:
+        base_dir = os.path.dirname(os.environ['APPIMAGE'])
+    elif getattr(sys, 'frozen', False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    db_path = os.path.join(base_dir, 'db')
+    
+    if not os.path.exists(db_path):
+        try:
+            os.makedirs(db_path)
+            print(f"Created db directory at: {db_path}")
+        except Exception as e:
+            print(f"Error creating db directory: {e}")
+            return False
+    return True
+
 class SplashScreen:
     def __init__(self):
         gi.require_version('Gtk', '3.0')
@@ -88,7 +107,7 @@ def install_dependencies():
                     if process.poll() is not None and output == b'':
                         break
                     if output:
-                        pass  # Could parse output for more detailed progress
+                        pass
                 
                 if process.returncode != 0:
                     splash.update(f"Failed to install {pkg}", 1.0)
@@ -112,7 +131,6 @@ def install_dependencies():
     thread.daemon = True
     thread.start()
     
-    # Run GTK main loop while installing
     from gi.repository import Gtk
     while thread.is_alive():
         Gtk.main_iteration_do(False)
@@ -127,12 +145,14 @@ def is_module_available(module_name):
     except ImportError:
         return False
 
-# Run dependency check before anything else
+if not ensure_db_directory():
+    print("Failed to create db directory. The application may not work correctly.")
+    sys.exit(1)
+
 if not install_dependencies():
     print("Failed to install required dependencies. Please install them manually.")
     sys.exit(1)
 
-# Now proceed with the main application
 from gi.repository import Gtk, Pango, Gdk
 from py.recipes_tab import RecipesTab
 from py.ingredients_tab import IngredientsTab
@@ -143,6 +163,7 @@ from py.macro_tab import MacroBreakdownTab
 from py.costs_tab import CostsTab
 from py.youtube_tab import YouTubeTab
 from py.about_tab import AboutTab
+from py.nutrition_tab import NutritionTab
 
 class RecipeManager(Gtk.Window):
     def __init__(self):
@@ -153,14 +174,12 @@ class RecipeManager(Gtk.Window):
         self.notebook = Gtk.Notebook()
         self.add(self.notebook)
 
-        # Initialize tabs
         self.journal_tab = JournalTab(1200, 780)
         self.recipes_tab = RecipesTab(1200, 780, self)
         self.weight_tab = WeightStatsTab(1200, 780)
         self.bmr_tab = BMRStatsTab(1200, 780)
         self.macro_tab = MacroBreakdownTab(1200, 780)
         
-        # Connect tabs that need to communicate
         ingredients_tab = IngredientsTab(1200, 780, self.recipes_tab, self.journal_tab)
         self.journal_tab.set_weight_tab(self.weight_tab)
         self.journal_tab.set_bmr_tab(self.bmr_tab)
@@ -172,10 +191,11 @@ class RecipeManager(Gtk.Window):
             (ingredients_tab, "Ingredients"),
             (self.weight_tab, "Weight"),
             (self.bmr_tab, "BMR & Kcal"),
-            (self.macro_tab, "Nutrition"),
+            (self.macro_tab, "Macro"),
+            (NutritionTab(1200, 780), "Nutrition"),
             (CostsTab(1200, 780), "Costs"),
             (YouTubeTab(1200, 780), "Video Cookbook"),
-            (AboutTab(1200, 780), "About")  # Add the new About tab
+            (AboutTab(1200, 780), "About")
         ]
 
         css_provider = Gtk.CssProvider()
@@ -196,18 +216,21 @@ class RecipeManager(Gtk.Window):
             )
             self.notebook.append_page(scrolled, tab_label)
 
-        # Set up keyboard shortcuts - kompatibel version för GTK 3.0
         self.connect("key-press-event", self.on_key_press)
         
         self.show_all()
 
     def _set_app_icon(self):
-        icon_path = Path(__file__).parent / "db" / "icon.png"
-        if icon_path.exists():
-            self.set_icon_from_file(str(icon_path))
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        icon_path = os.path.join(base_dir, 'db', 'icon.png')
+        if os.path.exists(icon_path):
+            self.set_icon_from_file(icon_path)
 
     def on_key_press(self, widget, event):
-        # Alt + number shortcuts (1-9, 0 for last tab)
         if (event.state & Gdk.ModifierType.MOD1_MASK) and not (event.state & Gdk.ModifierType.CONTROL_MASK):
             if Gdk.KEY_1 <= event.keyval <= Gdk.KEY_9:
                 tab_index = event.keyval - Gdk.KEY_1
@@ -218,7 +241,6 @@ class RecipeManager(Gtk.Window):
                 self.notebook.set_current_page(self.notebook.get_n_pages() - 1)
                 return True
 
-        # Tab navigation handling
         ctrl_pressed = event.state & Gdk.ModifierType.CONTROL_MASK
         shift_pressed = event.state & Gdk.ModifierType.SHIFT_MASK
         
@@ -226,11 +248,10 @@ class RecipeManager(Gtk.Window):
             current = self.notebook.get_current_page()
             n_pages = self.notebook.get_n_pages()
             
-            # Determine direction
             if shift_pressed or event.keyval == Gdk.KEY_ISO_Left_Tab:
-                new_page = (current - 1) % n_pages  # Previous tab
+                new_page = (current - 1) % n_pages
             else:
-                new_page = (current + 1) % n_pages  # Next tab
+                new_page = (current + 1) % n_pages
             
             self.notebook.set_current_page(new_page)
             return True
@@ -238,7 +259,6 @@ class RecipeManager(Gtk.Window):
         return False
 
     def on_recipes_changed(self):
-        """Callback for when recipes are updated"""
         self.journal_tab.reload_recipes()
 
 if __name__ == "__main__":
