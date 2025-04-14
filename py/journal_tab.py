@@ -83,7 +83,7 @@ class JournalTab(Gtk.Box):
             self.recipe_combo.append_text(recipe['name'])
         top_box.pack_start(self.recipe_combo, False, False, 0)
 
-        self.gram_entry = Gtk.Entry(placeholder_text="Grams", width_chars=5)
+        self.gram_entry = Gtk.Entry(placeholder_text="Grams", width_chars=7)
         self.gram_entry.connect("changed", self._on_numeric_entry_changed)
         top_box.pack_start(self.gram_entry, False, False, 0)
 
@@ -94,7 +94,7 @@ class JournalTab(Gtk.Box):
         middle_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         self.pack_start(middle_box, False, False, 0)
 
-        self.weight_entry = Gtk.Entry(placeholder_text="My kg.hg", width_chars=7)
+        self.weight_entry = Gtk.Entry(placeholder_text="My kg.hg", width_chars=5)
         self.weight_entry.connect("changed", self._on_numeric_entry_changed)
         if self.last_weight:
             self.weight_entry.set_text(self.last_weight)
@@ -102,7 +102,13 @@ class JournalTab(Gtk.Box):
 
         middle_box.pack_start(Gtk.Box(), True, True, 0)
 
-        self.add_to_selected_check = Gtk.CheckButton(label="Add to selected date")
+        self.pts_check = Gtk.CheckButton(label="Pts.")
+        self.pts_check.set_sensitive(False)
+        self.pts_check.connect("toggled", self.on_pts_check_toggled)
+        middle_box.pack_start(self.pts_check, False, False, 0)
+
+        self.add_to_selected_check = Gtk.CheckButton(label="Add to date")
+        self.add_to_selected_check.set_sensitive(False)
         middle_box.pack_start(self.add_to_selected_check, False, False, 0)
 
         columns = [
@@ -120,6 +126,7 @@ class JournalTab(Gtk.Box):
         self.journal_tree.connect("query-tooltip", self.on_query_tooltip)
         self.journal_tree.connect("row-activated", self.on_row_activated)
         self.journal_tree.connect("key-press-event", self.on_key_press)
+        self.journal_tree.get_selection().connect("changed", self.on_journal_selection_changed)
 
         scrolled_window = Gtk.ScrolledWindow()
         scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -130,8 +137,173 @@ class JournalTab(Gtk.Box):
         self.pack_start(frame, True, True, 0)
 
         self._populate_journal_store()
-        self.ingredient_combo.connect("changed", lambda c: self.recipe_combo.set_active(-1) if c.get_active_text() else None)
-        self.recipe_combo.connect("changed", lambda c: self.ingredient_combo.set_active(-1) if c.get_active_text() else None)
+        self.ingredient_combo.connect("changed", self.on_combo_changed)
+        self.recipe_combo.connect("changed", self.on_combo_changed)
+
+    def on_pts_check_toggled(self, button):
+        if button.get_active():
+            self.gram_entry.set_placeholder_text("Pts.")
+        else:
+            self.gram_entry.set_placeholder_text("Grams")
+
+    def on_combo_changed(self, combo):
+        if combo == self.ingredient_combo:
+            if combo.get_active_text():
+                self.recipe_combo.set_active(-1)
+                self.pts_check.set_sensitive(False)
+                if self.pts_check.get_active():
+                    self.pts_check.set_active(False)
+                    self.gram_entry.set_placeholder_text("Grams")
+        elif combo == self.recipe_combo:
+            if combo.get_active_text():
+                self.ingredient_combo.set_active(-1)
+                self.pts_check.set_sensitive(True)
+
+    def on_journal_selection_changed(self, selection):
+        model, paths = selection.get_selected_rows()
+        self.add_to_selected_check.set_sensitive(len(paths) > 0)
+
+    def on_add_to_journal_clicked(self, widget):
+        weight_text = self.weight_entry.get_text().strip().replace(',', '.')
+        if not weight_text:
+            self._show_error("Enter your weight in 'My weight (kg)'")
+            return
+        try:
+            weight = float(weight_text)
+        except ValueError:
+            self._show_error("Invalid value in 'My weight (kg)' - must be a number (e.g. 75.5 or 75,5)")
+            return
+
+        ingredient_name = self.ingredient_combo.get_active_text()
+        recipe_name = self.recipe_combo.get_active_text()
+        gram_text = self.gram_entry.get_text().strip().replace(',', '.')
+        
+        if not gram_text:
+            self._show_error("Enter a weight in 'Grams' or 'Pts.'")
+            return
+        try:
+            gram = float(gram_text)
+            if gram < 0:
+                raise ValueError
+        except ValueError:
+            self._show_error("Invalid value - must be a positive number (e.g. 200 or 200.5)")
+            return
+
+        if ingredient_name and recipe_name:
+            self._show_error("Select either an ingredient or a recipe, not both")
+            return
+        elif not ingredient_name and not recipe_name:
+            self._show_error("Select an ingredient or a recipe")
+            return
+
+        if self.add_to_selected_check.get_active():
+            selection = self.journal_tree.get_selection()
+            model, paths = selection.get_selected_rows()
+            
+            if not paths:
+                self._show_error("Select a date in the journal to add the entry to.")
+                return
+                
+            path = paths[0]
+            treeiter = model.get_iter(path)
+            selected_date = model[treeiter][0]
+            
+            try:
+                datetime.strptime(selected_date, "%Y-%m-%d")
+            except ValueError:
+                self._show_error("Invalid date selected.")
+                return
+                
+            date = selected_date
+            timestamp = f"{date} 23:59:59"
+        else:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            date = datetime.now().strftime("%Y-%m-%d")
+
+        entry = {'timestamp': timestamp, 'date': date, 'weight': weight, 'gram': gram}
+        
+        if ingredient_name:
+            item = next((i for i in self.ingredients_data if i['name'] == ingredient_name), None)
+            if not item:
+                self._show_error("Selected ingredient not found")
+                return
+            factor = gram / 100
+            entry.update({
+                'ate': ingredient_name,
+                'kcal': item['kcal'] * factor,
+                'carbs': item['carbs'] * factor,
+                'sugar': item['sugar'] * factor,
+                'fat': item['fat'] * factor,
+                'protein': item['protein'] * factor,
+                'fiber': item['fiber'] * factor,
+                'salt': item['salt'] * factor,
+                'cost': item['cost'] * factor
+            })
+        elif recipe_name:
+            recipe = next((r for r in self.recipes_data if r['name'] == recipe_name), None)
+            if not recipe:
+                self._show_error("Selected recipe not found")
+                return
+            
+            if self.pts_check.get_active():
+                # Calculate based on portions
+                portions = recipe.get('portions', 1)
+                if portions <= 0:
+                    portions = 1
+                
+                # Calculate total values for the recipe
+                total_kcal = sum(ing['kcal'] for ing in recipe['ingredients'])
+                total_gram = sum(ing['gram'] for ing in recipe['ingredients'])
+                
+                # Calculate values per portion
+                kcal_per_portion = total_kcal / portions
+                gram_per_portion = total_gram / portions
+                
+                # Calculate based on requested portions
+                factor = gram / portions  # gram is actually number of portions here
+                entry.update({
+                    'ate': recipe_name,
+                    'kcal': kcal_per_portion * gram,
+                    'carbs': sum(ing['carbs'] for ing in recipe['ingredients']) * factor,
+                    'sugar': sum(ing['sugar'] for ing in recipe['ingredients']) * factor,
+                    'fat': sum(ing['fat'] for ing in recipe['ingredients']) * factor,
+                    'protein': sum(ing['protein'] for ing in recipe['ingredients']) * factor,
+                    'fiber': sum(ing['fiber'] for ing in recipe['ingredients']) * factor,
+                    'salt': sum(ing['salt'] for ing in recipe['ingredients']) * factor,
+                    'cost': sum(ing['cost'] for ing in recipe['ingredients']) * factor,
+                    'pts': True,
+                    'gram': gram_per_portion * gram  # Store actual gram amount
+                })
+            else:
+                # Original gram-based calculation
+                total_gram = sum(ing['gram'] for ing in recipe['ingredients'])
+                if total_gram == 0:
+                    self._show_error("Recipe has no ingredients")
+                    return
+                factor = gram / total_gram
+                entry.update({
+                    'ate': recipe_name,
+                    'kcal': sum(ing['kcal'] for ing in recipe['ingredients']) * factor,
+                    'carbs': sum(ing['carbs'] for ing in recipe['ingredients']) * factor,
+                    'sugar': sum(ing['sugar'] for ing in recipe['ingredients']) * factor,
+                    'fat': sum(ing['fat'] for ing in recipe['ingredients']) * factor,
+                    'protein': sum(ing['protein'] for ing in recipe['ingredients']) * factor,
+                    'fiber': sum(ing['fiber'] for ing in recipe['ingredients']) * factor,
+                    'salt': sum(ing['salt'] for ing in recipe['ingredients']) * factor,
+                    'cost': sum(ing['cost'] for ing in recipe['ingredients']) * factor,
+                    'pts': False
+                })
+
+        self.journal_data.append(entry)
+        self._save_journal()
+        self._refresh_journal_view()
+        
+        if self.weight_tab and hasattr(self.weight_tab, 'update_plot'):
+            self.weight_tab.update_plot()
+        if self.bmr_tab and hasattr(self.bmr_tab, 'update_bmr_plot'):
+            self.bmr_tab.update_bmr_plot()
+        if self.macro_tab and hasattr(self.macro_tab, 'update_charts'):
+            self.macro_tab.update_charts()
 
     def on_key_press(self, widget, event):
         if event.keyval == Gdk.KEY_Delete:
@@ -582,109 +754,6 @@ class JournalTab(Gtk.Box):
                 json.dump({'entries': self.journal_data}, f, indent=2, ensure_ascii=False)
         except Exception as e:
             self._show_error(f"Error saving journal: {e}")
-
-    def on_add_to_journal_clicked(self, widget):
-        weight_text = self.weight_entry.get_text().strip().replace(',', '.')
-        if not weight_text:
-            self._show_error("Enter your weight in 'My weight (kg)'")
-            return
-        try:
-            weight = float(weight_text)
-        except ValueError:
-            self._show_error("Invalid value in 'My weight (kg)' - must be a number (e.g. 75.5 or 75,5)")
-            return
-
-        ingredient_name = self.ingredient_combo.get_active_text()
-        recipe_name = self.recipe_combo.get_active_text()
-        gram_text = self.gram_entry.get_text().strip().replace(',', '.')
-        
-        if not gram_text:
-            self._show_error("Enter a weight in 'Grams'")
-            return
-        try:
-            gram = float(gram_text)
-            if gram < 0:
-                raise ValueError
-        except ValueError:
-            self._show_error("Invalid value in 'Grams' - must be a positive number (e.g. 200 or 200.5)")
-            return
-
-        if ingredient_name and recipe_name:
-            self._show_error("Select either an ingredient or a recipe, not both")
-            return
-        elif not ingredient_name and not recipe_name:
-            self._show_error("Select an ingredient or a recipe")
-            return
-
-        if self.add_to_selected_check.get_active():
-            selection = self.journal_tree.get_selection()
-            model, treeiter = selection.get_selected()
-            if not treeiter:
-                self._show_error("Select a date in the journal to add the entry to.")
-                return
-            selected_date = model[treeiter][0]
-            try:
-                datetime.strptime(selected_date, "%Y-%m-%d")
-            except ValueError:
-                self._show_error("Invalid date selected.")
-                return
-            date = selected_date
-            timestamp = f"{date} 23:59:59"
-        else:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            date = datetime.now().strftime("%Y-%m-%d")
-
-        entry = {'timestamp': timestamp, 'date': date, 'weight': weight, 'gram': gram}
-        
-        if ingredient_name:
-            item = next((i for i in self.ingredients_data if i['name'] == ingredient_name), None)
-            if not item:
-                self._show_error("Selected ingredient not found")
-                return
-            factor = gram / 100
-            entry.update({
-                'ate': ingredient_name,
-                'kcal': item['kcal'] * factor,
-                'carbs': item['carbs'] * factor,
-                'sugar': item['sugar'] * factor,
-                'fat': item['fat'] * factor,
-                'protein': item['protein'] * factor,
-                'fiber': item['fiber'] * factor,
-                'salt': item['salt'] * factor,
-                'cost': item['cost'] * factor
-            })
-        elif recipe_name:
-            recipe = next((r for r in self.recipes_data if r['name'] == recipe_name), None)
-            if not recipe:
-                self._show_error("Selected recipe not found")
-                return
-            total_gram = sum(ing['gram'] for ing in recipe['ingredients'])
-            if total_gram == 0:
-                self._show_error("Recipe has no ingredients")
-                return
-            factor = gram / total_gram
-            entry.update({
-                'ate': recipe_name,
-                'kcal': sum(ing['kcal'] for ing in recipe['ingredients']) * factor,
-                'carbs': sum(ing['carbs'] for ing in recipe['ingredients']) * factor,
-                'sugar': sum(ing['sugar'] for ing in recipe['ingredients']) * factor,
-                'fat': sum(ing['fat'] for ing in recipe['ingredients']) * factor,
-                'protein': sum(ing['protein'] for ing in recipe['ingredients']) * factor,
-                'fiber': sum(ing['fiber'] for ing in recipe['ingredients']) * factor,
-                'salt': sum(ing['salt'] for ing in recipe['ingredients']) * factor,
-                'cost': sum(ing['cost'] for ing in recipe['ingredients']) * factor
-            })
-
-        self.journal_data.append(entry)
-        self._save_journal()
-        self._refresh_journal_view()
-        
-        if self.weight_tab and hasattr(self.weight_tab, 'update_plot'):
-            self.weight_tab.update_plot()
-        if self.bmr_tab and hasattr(self.bmr_tab, 'update_bmr_plot'):
-            self.bmr_tab.update_bmr_plot()
-        if self.macro_tab and hasattr(self.macro_tab, 'update_charts'):
-            self.macro_tab.update_charts()
 
     def detail_cell_data_func(self, column, cell, model, iter, data):
         col_index, total_kcal, bmr = data
