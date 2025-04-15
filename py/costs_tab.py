@@ -68,6 +68,8 @@ class CostsGraph(Gtk.DrawingArea):
                                   graph_width, graph_height, max_cost, dates, 
                                   daily_costs, moving_avg)
         
+        self._draw_horizontal_legend(cr, width, text_color)
+        
         self.graph_dates, self.graph_costs, self.graph_avg = dates, daily_costs, moving_avg
 
     def _draw_no_data(self, cr, width, height, text_color):
@@ -173,6 +175,58 @@ class CostsGraph(Gtk.DrawingArea):
                 cr.set_line_width(1.5)
                 cr.arc(x_pos, y_pos, point_radius + 2, 0, 2 * pi)
                 cr.stroke()
+
+    def _draw_horizontal_legend(self, cr, width, text_color):
+        cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(10)
+        
+        daily_color = (0.2, 0.8, 0.4, 1.0)
+        avg_color = (1.0, 0.5, 0.0, 1.0)
+        
+        label1 = "Daily Cost"
+        label2 = "7-day Avg"
+        extents1 = cr.text_extents(label1)
+        extents2 = cr.text_extents(label2)
+        
+        # Calculate total width needed
+        swatch_width = 12
+        text_padding = 5
+        item_spacing = 15
+        total_width = (swatch_width + text_padding + extents1.width + 
+                      item_spacing + 
+                      swatch_width + text_padding + extents2.width)
+        
+        legend_x = (width - total_width) / 2
+        legend_y = 49
+        
+        # Draw legend background
+        cr.set_source_rgba(0.2, 0.2, 0.2, 0.8)
+        cr.rectangle(legend_x - 5, legend_y - 5, total_width + 10, extents1.height + 10)
+        cr.fill()
+        
+        cr.set_source_rgba(0.8, 0.8, 0.8, 0.8)
+        cr.set_line_width(1)
+        cr.rectangle(legend_x - 5, legend_y - 5, total_width + 10, extents1.height + 10)
+        cr.stroke()
+        
+        # Draw first legend item (Daily Cost)
+        cr.set_source_rgba(*daily_color)
+        cr.rectangle(legend_x, legend_y + 1, swatch_width, 10)
+        cr.fill()
+        
+        cr.set_source_rgba(1, 1, 1, 1)
+        cr.move_to(legend_x + swatch_width + text_padding, legend_y + extents1.height + 1)
+        cr.show_text(label1)
+        
+        # Draw second legend item (7-day Avg)
+        second_item_x = legend_x + swatch_width + text_padding + extents1.width + item_spacing
+        cr.set_source_rgba(*avg_color)
+        cr.rectangle(second_item_x, legend_y + 1, swatch_width, 10)
+        cr.fill()
+        
+        cr.set_source_rgba(1, 1, 1, 1)
+        cr.move_to(second_item_x + swatch_width + text_padding, legend_y + extents1.height + 1)
+        cr.show_text(label2)
 
     def _get_rgba(self, color, alpha=None):
         return (color.red, color.green, color.blue, alpha if alpha is not None else color.alpha)
