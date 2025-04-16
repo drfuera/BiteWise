@@ -69,7 +69,7 @@ class DietSettingsDialog(Gtk.Dialog):
         diet_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5, margin=10)
         
         diets = ["None"] + sorted([
-            "Atkins Diet", "Carnivore Diet", "DASH Diet", "Flexitarian Diet", "Fruitarian Diet",
+            "Atkins Diet", "Carnivore Diet", "DASH Diet", "Fruitarian Diet",
             "High Protein Diet", "Ketogenic Diet", "LCHF", "Mediterranean Diet", "Military Diet",
             "Paleo Diet", "Pescatarian Diet", "Raw Food Diet", "Ray Kurzweil Diet", "Scandinavian Diet",
             "Vegan Diet", "WHO Guidelines", "Zone Diet"
