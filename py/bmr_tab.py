@@ -48,9 +48,15 @@ class BMRGraph(Gtk.DrawingArea):
         if not dates or not bmr_values or not kcal_values:
             self._draw_no_data(cr, width, height, text_color, "Incomplete BMR/Calorie data")
             return
+        
+        # Calculate min/max values including all PAL levels
+        pal_levels = [1.20, 1.35, 1.50, 1.70, 1.85, 2.10, 2.40]
+        pal_values = []
+        for pal in pal_levels:
+            pal_values.extend([bmr * pal for bmr in bmr_values])
             
-        min_value = min(min(bmr_values), min(kcal_values)) * 0.95
-        max_value = max(max(bmr_values), max(kcal_values)) * 1.05
+        min_value = min(min(bmr_values), min(kcal_values), min(pal_values)) * 0.95
+        max_value = max(max(bmr_values), max(kcal_values), max(pal_values)) * 1.05
         value_range = max_value - min_value if max_value != min_value else max_value or 1
         
         left_margin, right_margin = 60, 60
@@ -66,10 +72,37 @@ class BMRGraph(Gtk.DrawingArea):
         bmr_color = (0.4, 0.7, 1.0, 1.0)
         kcal_color = (1.0, 0.5, 0.0, 1.0)
         
-        bmr_points = self._draw_line(cr, dates, bmr_values, left_margin, height, bottom_margin, graph_width, 
-                                   graph_height, min_value, value_range, bmr_color)
-        kcal_points = self._draw_line(cr, dates, kcal_values, left_margin, height, bottom_margin, graph_width, 
-                                    graph_height, min_value, value_range, kcal_color)
+        # Draw PAL lines first (so they're behind the main lines)
+        pal_colors = [
+            (0.2, 0.8, 0.2, 0.3),  # 1.20
+            (0.4, 0.8, 0.2, 0.3),   # 1.35
+            (0.6, 0.8, 0.2, 0.3),   # 1.50
+            (0.8, 0.8, 0.2, 0.3),   # 1.70
+            (1.0, 0.6, 0.0, 0.3),   # 1.85
+            (1.0, 0.4, 0.0, 0.3),   # 2.10
+            (1.0, 0.2, 0.0, 0.3)    # 2.40
+        ]
+        
+        pal_descriptions = [
+            "Complete rest (bedridden)",
+            "Very low activity (sedentary)",
+            "Low activity (office work)",
+            "Moderate activity (light exercise)",
+            "Active (regular exercise)",
+            "Very active (intense exercise)",
+            "Extremely active (athlete level)"
+        ]
+        
+        for pal, color in zip(pal_levels, pal_colors):
+            pal_values = [bmr * pal for bmr in bmr_values]
+            self._draw_line(cr, dates, pal_values, left_margin, height, bottom_margin, 
+                          graph_width, graph_height, min_value, value_range, color)
+        
+        # Draw main lines on top
+        bmr_points = self._draw_line(cr, dates, bmr_values, left_margin, height, bottom_margin, 
+                                   graph_width, graph_height, min_value, value_range, bmr_color)
+        kcal_points = self._draw_line(cr, dates, kcal_values, left_margin, height, bottom_margin, 
+                                    graph_width, graph_height, min_value, value_range, kcal_color)
         
         if len(dates) <= 100:
             self._draw_points(cr, bmr_points, bmr_color)
@@ -79,7 +112,7 @@ class BMRGraph(Gtk.DrawingArea):
             self._draw_highlight(cr, bmr_points[self.hover_point], bmr_color)
             self._draw_highlight(cr, kcal_points[self.hover_point], kcal_color)
         
-        self._draw_legend(cr, width, bmr_color, kcal_color, text_color)
+        self._draw_legend(cr, width, bmr_color, kcal_color, text_color, pal_levels, pal_colors, pal_descriptions)
         
         self.graph_bmr_points = bmr_points
         self.graph_kcal_points = kcal_points
@@ -99,7 +132,7 @@ class BMRGraph(Gtk.DrawingArea):
         cr.set_source_rgba(text_color.red, text_color.green, text_color.blue, text_color.alpha)
         cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         cr.set_font_size(14)
-        title = "BMR vs Calorie Intake"
+        title = "BMR vs Calorie Intake (TDEE = BMR × PAL)"
         extents = cr.text_extents(title)
         cr.move_to(width/2 - extents.width/2, 30)
         cr.show_text(title)
@@ -184,22 +217,31 @@ class BMRGraph(Gtk.DrawingArea):
         cr.arc(point[0], point[1], radius, 0, 2 * pi)
         cr.fill()
     
-    def _draw_legend(self, cr, width, bmr_color, kcal_color, text_color):
-        legend_swatch_size, legend_swatch_height = 12, 10
-        legend_padding, legend_margin = 8, 5
-        legend_text_spacing, legend_item_spacing = 5, 5
+    def _draw_legend(self, cr, width, bmr_color, kcal_color, text_color, pal_levels=None, pal_colors=None, pal_descriptions=None):
+        legend_swatch_size = 12
+        legend_swatch_height = 10
+        legend_margin = 5
+        legend_text_spacing = 5
+        legend_item_spacing = 15
         
         cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         cr.set_font_size(10)
         
+        # Main legend (BMR and Calories)
         labels = ["BMR", "Calories"]
+        colors = [bmr_color, kcal_color]
         label_widths = [cr.text_extents(label)[2] for label in labels]
         max_text_height = max(cr.text_extents(label)[3] for label in labels)
         
-        total_width = (legend_swatch_size + legend_text_spacing) * 2 + sum(label_widths) + legend_item_spacing
+        # Calculate total width needed for main legend
+        total_swatch_width = (legend_swatch_size + legend_text_spacing) * len(labels)
+        total_text_width = sum(label_widths) + (legend_item_spacing * (len(labels) - 1))
+        total_width = total_swatch_width + total_text_width
+        
         legend_x = (width - total_width) / 2
         legend_y = 49
         
+        # Draw main legend box
         cr.set_source_rgba(0.2, 0.2, 0.2, 0.8)
         cr.rectangle(legend_x - legend_margin, legend_y - legend_margin, 
                     total_width + 2 * legend_margin, max_text_height + 2 * legend_margin)
@@ -211,8 +253,9 @@ class BMRGraph(Gtk.DrawingArea):
                     total_width + 2 * legend_margin, max_text_height + 2 * legend_margin)
         cr.stroke()
         
+        # Draw main legend items
         current_x = legend_x
-        for i, (label, color) in enumerate(zip(labels, [bmr_color, kcal_color])):
+        for i, (label, color) in enumerate(zip(labels, colors)):
             cr.set_source_rgba(*color)
             cr.rectangle(current_x, legend_y + 1, legend_swatch_size, legend_swatch_height)
             cr.fill()
@@ -223,6 +266,57 @@ class BMRGraph(Gtk.DrawingArea):
             cr.show_text(label)
             
             current_x += legend_swatch_size + legend_text_spacing + label_widths[i] + legend_item_spacing
+        
+        # PAL legend
+        if pal_levels and pal_colors and pal_descriptions:
+            cr.set_font_size(9)
+            
+            # Calculate maximum width needed for PAL legend
+            pal_label_widths = []
+            max_pal_text_height = 0
+            for pal, desc in zip(pal_levels, pal_descriptions):
+                label = f"PAL {pal:.2f}: {desc}"
+                extents = cr.text_extents(label)
+                pal_label_widths.append(extents.width)
+                if extents.height > max_pal_text_height:
+                    max_pal_text_height = extents.height
+            
+            max_pal_width = max(pal_label_widths)
+            pal_legend_height = (len(pal_levels) * (max_pal_text_height + 5)) + 2 * legend_margin
+            
+            # Center the PAL legend
+            pal_legend_x = (width - (max_pal_width + legend_swatch_size + legend_text_spacing + 2 * legend_margin)) / 2
+            pal_legend_y = legend_y + max_text_height + 2 * legend_margin + 20
+            
+            # Draw PAL legend box
+            cr.set_source_rgba(0.2, 0.2, 0.2, 0.8)
+            cr.rectangle(pal_legend_x, pal_legend_y - legend_margin, 
+                        max_pal_width + legend_swatch_size + legend_text_spacing + 2 * legend_margin,
+                        pal_legend_height)
+            cr.fill()
+            
+            cr.set_source_rgba(0.8, 0.8, 0.8, 0.8)
+            cr.set_line_width(1)
+            cr.rectangle(pal_legend_x, pal_legend_y - legend_margin,
+                        max_pal_width + legend_swatch_size + legend_text_spacing + 2 * legend_margin,
+                        pal_legend_height)
+            cr.stroke()
+            
+            # Draw PAL legend items
+            current_pal_y = pal_legend_y
+            for pal, color, desc in zip(pal_levels, pal_colors, pal_descriptions):
+                cr.set_source_rgba(*color)
+                cr.rectangle(pal_legend_x + legend_margin, current_pal_y, 
+                            legend_swatch_size, legend_swatch_height)
+                cr.fill()
+                
+                cr.set_source_rgba(1, 1, 1, 1)
+                label = f"PAL {pal:.2f}: {desc}"
+                cr.move_to(pal_legend_x + legend_margin + legend_swatch_size + legend_text_spacing, 
+                          current_pal_y + max_pal_text_height)
+                cr.show_text(label)
+                
+                current_pal_y += max_pal_text_height + 5
 
     def on_motion_notify(self, widget, event):
         if not hasattr(self, 'graph_bmr_points') or not hasattr(self, 'graph_kcal_points'):
