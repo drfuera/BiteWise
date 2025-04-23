@@ -42,6 +42,9 @@ class IngredientsTab(Gtk.Box):
         self.remove_button.connect("clicked", self.on_remove_clicked)
         button_box.pack_start(self.remove_button, False, False, 0)
 
+        # Add spacer to push right buttons to the right
+        button_box.pack_start(Gtk.Box(), True, True, 0)
+
         self.add_button = Gtk.Button(label="Add ingredient")
         self.add_button.set_margin_start(5)
         self.add_button.connect("clicked", self.on_add_clicked)
@@ -52,6 +55,13 @@ class IngredientsTab(Gtk.Box):
         self.update_button.set_sensitive(False)
         self.update_button.connect("clicked", self.on_update_clicked)
         button_box.pack_end(self.update_button, False, False, 0)
+
+        self.copy_button = Gtk.Button(label="Copy ingredients")
+        self.copy_button.set_margin_start(5)
+        self.copy_button.set_margin_end(10)
+        self.copy_button.set_sensitive(False)
+        self.copy_button.connect("clicked", self.on_copy_clicked)
+        button_box.pack_end(self.copy_button, False, False, 0)
 
         self.ingredients_tree.get_selection().connect("changed", self.on_selection_changed)
         self.ingredients_tree.connect("row-activated", self.on_row_activated)
@@ -91,7 +101,9 @@ class IngredientsTab(Gtk.Box):
 
     def on_selection_changed(self, selection):
         model, paths = selection.get_selected_rows()
-        self.update_button.set_sensitive(len(paths) > 0)
+        has_selection = len(paths) > 0
+        self.update_button.set_sensitive(has_selection)
+        self.copy_button.set_sensitive(has_selection)
 
     def on_remove_clicked(self, widget):
         selection = self.ingredients_tree.get_selection()
@@ -149,6 +161,22 @@ class IngredientsTab(Gtk.Box):
             values=[""] + [0.0] * 8,
             is_update=False
         )
+
+    def on_copy_clicked(self, widget):
+        selection = self.ingredients_tree.get_selection()
+        model, paths = selection.get_selected_rows()
+        
+        if not paths:
+            return
+            
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        ingredient_names = []
+        
+        for path in paths:
+            treeiter = model.get_iter(path)
+            ingredient_names.append(model.get_value(treeiter, 0))
+        
+        clipboard.set_text("\n".join(ingredient_names), -1)
 
     def _show_ingredient_dialog(self, title, values, is_update):
         dialog = Gtk.Dialog(
