@@ -93,10 +93,17 @@ class BMRGraph(Gtk.DrawingArea):
             "Extremely active (athlete level)"
         ]
         
+        # Store PAL points for each level
+        self.pal_points = {}
         for pal, color in zip(pal_levels, pal_colors):
             pal_values = [bmr * pal for bmr in bmr_values]
-            self._draw_line(cr, dates, pal_values, left_margin, height, bottom_margin, 
-                          graph_width, graph_height, min_value, value_range, color)
+            points = self._draw_line(cr, dates, pal_values, left_margin, height, bottom_margin, 
+                                   graph_width, graph_height, min_value, value_range, color)
+            self.pal_points[pal] = points
+            
+            # Draw points for PAL lines
+            if len(dates) <= 100:
+                self._draw_points(cr, points, color, radius=3)
         
         # Draw main lines on top
         bmr_points = self._draw_line(cr, dates, bmr_values, left_margin, height, bottom_margin, 
@@ -111,6 +118,10 @@ class BMRGraph(Gtk.DrawingArea):
         if self.hover_point is not None and self.hover_point < len(bmr_points):
             self._draw_highlight(cr, bmr_points[self.hover_point], bmr_color)
             self._draw_highlight(cr, kcal_points[self.hover_point], kcal_color)
+            # Highlight all PAL points for this date
+            for pal, points in self.pal_points.items():
+                if self.hover_point < len(points):
+                    self._draw_highlight(cr, points[self.hover_point], pal_colors[pal_levels.index(pal)], radius=5)
         
         self._draw_legend(cr, width, bmr_color, kcal_color, text_color, pal_levels, pal_colors, pal_descriptions)
         
@@ -119,6 +130,7 @@ class BMRGraph(Gtk.DrawingArea):
         self.graph_dates = dates
         self.graph_bmr = bmr_values
         self.graph_kcal = kcal_values
+        self.pal_levels = pal_levels
     
     def _draw_no_data(self, cr, width, height, text_color, text="No BMR/Calorie data available"):
         cr.set_source_rgba(text_color.red, text_color.green, text_color.blue, text_color.alpha)
@@ -325,14 +337,18 @@ class BMRGraph(Gtk.DrawingArea):
         closest_point = None
         min_dist = float('inf')
         
-        for i, (bmr_point, kcal_point) in enumerate(zip(self.graph_bmr_points, self.graph_kcal_points)):
-            bmr_dist = ((bmr_point[0] - event.x) ** 2 + (bmr_point[1] - event.y) ** 2) ** 0.5
-            kcal_dist = ((kcal_point[0] - event.x) ** 2 + (kcal_point[1] - event.y) ** 2) ** 0.5
-            dist = min(bmr_dist, kcal_dist)
-            
+        # Check all points (BMR, Calories, and PAL levels)
+        all_points = []
+        all_points.extend(self.graph_bmr_points)
+        all_points.extend(self.graph_kcal_points)
+        for pal_points in self.pal_points.values():
+            all_points.extend(pal_points)
+        
+        for i, point in enumerate(all_points):
+            dist = ((point[0] - event.x) ** 2 + (point[1] - event.y) ** 2) ** 0.5
             if dist < min_dist and dist < 20:
                 min_dist = dist
-                closest_point = i
+                closest_point = i % len(self.graph_bmr_points)  # Map back to date index
         
         if closest_point != self.hover_point:
             self.hover_point = closest_point
@@ -359,9 +375,23 @@ class BMRGraph(Gtk.DrawingArea):
         except:
             date_str = date
         
+        # Calculate PAL comparisons
+        pal_comparisons = []
+        for pal in self.pal_levels:
+            pal_value = bmr * pal
+            if pal_value == 0:  # Avoid division by zero
+                continue
+            percentage = ((kcal - pal_value) / pal_value) * 100
+            if percentage > 0:
+                comparison = f"+{percentage:.1f}% above"
+            else:
+                comparison = f"{percentage:.1f}% below"
+            pal_comparisons.append(f"PAL {pal:.2f}: {pal_value:.0f} kcal ({comparison})")
+        
         tooltip_text = (f"<b>{date_str}</b>\n" + 
                        (f"Weight: {weight} kg\n" if weight else "") +
-                       f"BMR: {bmr:.0f} kcal\nCalories: {kcal:.0f} kcal")
+                       f"BMR: {bmr:.0f} kcal\nCalories: {kcal:.0f} kcal\n\n" +
+                       "\n".join(pal_comparisons))
         tooltip.set_markup(tooltip_text)
         return True
 
