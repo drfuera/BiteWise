@@ -65,7 +65,7 @@ class AboutTab(Gtk.Box):
         grid.set_halign(Gtk.Align.CENTER)
         
         # Version
-        self._add_grid_row(grid, 0, "Version:", "1.0.3")
+        self._add_grid_row(grid, 0, "Version:", "1.0.4")
         # Author
         self._add_grid_row(grid, 1, "Author:", "Andrej Fuera")
         # Session ID
