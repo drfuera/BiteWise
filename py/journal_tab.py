@@ -1,13 +1,12 @@
 import gi
 import json
-import re
 import os
 import sys
 from datetime import datetime
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk
 from .diet_guidelines import get_diet_colors, calculate_bmr, calculate_remaining
-from .journal_dialog import DietSettingsDialog
+from .journal_dialog import DietSettingsDialog, AddEntryDialog
 
 class JournalTab(Gtk.Box):
     def __init__(self, window_width, window_height):
@@ -16,6 +15,7 @@ class JournalTab(Gtk.Box):
         
         self.db_dir = self._get_db_dir()
         self._load_data()
+        self.last_entered_weight = self.last_weight
         self._setup_ui()
 
     def _get_db_dir(self):
@@ -65,52 +65,7 @@ class JournalTab(Gtk.Box):
             self.last_weight = ''
 
     def _setup_ui(self):
-        top_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.pack_start(top_box, False, False, 0)
-
-        self.diet_settings_button = Gtk.Button(label="Diet settings")
-        self.diet_settings_button.connect("clicked", self.on_diet_settings_clicked)
-        top_box.pack_start(self.diet_settings_button, False, False, 0)
-
-        top_box.pack_start(Gtk.Box(), True, True, 0)
-
-        self.ingredient_combo = Gtk.ComboBoxText()
-        self._populate_ingredient_combo()
-        top_box.pack_start(self.ingredient_combo, False, False, 0)
-
-        self.recipe_combo = Gtk.ComboBoxText()
-        for recipe in sorted(self.recipes_data, key=lambda x: x['name'].lower()):
-            self.recipe_combo.append_text(recipe['name'])
-        top_box.pack_start(self.recipe_combo, False, False, 0)
-
-        self.gram_entry = Gtk.Entry(placeholder_text="Grams", width_chars=7)
-        self.gram_entry.connect("changed", self._on_numeric_entry_changed)
-        top_box.pack_start(self.gram_entry, False, False, 0)
-
-        self.add_button = Gtk.Button(label="Add to journal")
-        self.add_button.connect("clicked", self.on_add_to_journal_clicked)
-        top_box.pack_start(self.add_button, False, False, 0)
-
-        middle_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.pack_start(middle_box, False, False, 0)
-
-        self.weight_entry = Gtk.Entry(placeholder_text="My kg.hg", width_chars=5)
-        self.weight_entry.connect("changed", self._on_numeric_entry_changed)
-        if self.last_weight:
-            self.weight_entry.set_text(self.last_weight)
-        middle_box.pack_start(self.weight_entry, False, False, 0)
-
-        middle_box.pack_start(Gtk.Box(), True, True, 0)
-
-        self.pts_check = Gtk.CheckButton(label="Pts.")
-        self.pts_check.set_sensitive(False)
-        self.pts_check.connect("toggled", self.on_pts_check_toggled)
-        middle_box.pack_start(self.pts_check, False, False, 0)
-
-        self.add_to_selected_check = Gtk.CheckButton(label="Add to date")
-        self.add_to_selected_check.set_sensitive(False)
-        middle_box.pack_start(self.add_to_selected_check, False, False, 0)
-
+        # Create the table first
         columns = [
             ("Date", 0.12), ("Grams", 0.08), ("Calories", 0.10), ("Carbs", 0.10),
             ("Sugar", 0.10), ("Fat", 0.10), ("Protein", 0.10), ("Fiber", 0.10),
@@ -126,7 +81,6 @@ class JournalTab(Gtk.Box):
         self.journal_tree.connect("query-tooltip", self.on_query_tooltip)
         self.journal_tree.connect("row-activated", self.on_row_activated)
         self.journal_tree.connect("key-press-event", self.on_key_press)
-        self.journal_tree.get_selection().connect("changed", self.on_journal_selection_changed)
 
         scrolled_window = Gtk.ScrolledWindow()
         scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -136,89 +90,55 @@ class JournalTab(Gtk.Box):
         frame.add(scrolled_window)
         self.pack_start(frame, True, True, 0)
 
+        # Create button box at the bottom
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.pack_start(button_box, False, False, 0)
+
+        self.diet_settings_button = Gtk.Button(label="Diet settings")
+        self.diet_settings_button.connect("clicked", self.on_diet_settings_clicked)
+        button_box.pack_start(self.diet_settings_button, False, False, 0)
+
+        button_box.pack_start(Gtk.Box(), True, True, 0)
+
+        self.add_button = Gtk.Button(label="Add to journal")
+        self.add_button.connect("clicked", self.on_add_entry_clicked)
+        button_box.pack_start(self.add_button, False, False, 0)
+
         self._populate_journal_store()
-        self.ingredient_combo.connect("changed", self.on_combo_changed)
-        self.recipe_combo.connect("changed", self.on_combo_changed)
 
-    def on_pts_check_toggled(self, button):
-        if button.get_active():
-            self.gram_entry.set_placeholder_text("Pts.")
-        else:
-            self.gram_entry.set_placeholder_text("Grams")
+    def on_add_entry_clicked(self, widget):
+        dialog = AddEntryDialog(self)
+        dialog.run()
 
-    def on_combo_changed(self, combo):
-        if combo == self.ingredient_combo:
-            if combo.get_active_text():
-                self.recipe_combo.set_active(-1)
-                self.pts_check.set_sensitive(False)
-                if self.pts_check.get_active():
-                    self.pts_check.set_active(False)
-                    self.gram_entry.set_placeholder_text("Grams")
-        elif combo == self.recipe_combo:
-            if combo.get_active_text():
-                self.ingredient_combo.set_active(-1)
-                self.pts_check.set_sensitive(True)
-
-    def on_journal_selection_changed(self, selection):
-        model, paths = selection.get_selected_rows()
-        self.add_to_selected_check.set_sensitive(len(paths) > 0)
-
-    def on_add_to_journal_clicked(self, widget):
-        weight_text = self.weight_entry.get_text().strip().replace(',', '.')
+    def add_entry(self, ingredient_name, recipe_name, gram_text, weight_text, pts_active, date, timestamp):
+        weight_text = weight_text.strip().replace(',', '.')
         if not weight_text:
             self._show_error("Enter your weight in 'My weight (kg)'")
-            return
+            return False
         try:
             weight = float(weight_text)
         except ValueError:
             self._show_error("Invalid value in 'My weight (kg)' - must be a number (e.g. 75.5 or 75,5)")
-            return
+            return False
 
-        ingredient_name = self.ingredient_combo.get_active_text()
-        recipe_name = self.recipe_combo.get_active_text()
-        gram_text = self.gram_entry.get_text().strip().replace(',', '.')
-        
+        gram_text = gram_text.strip().replace(',', '.')
         if not gram_text:
             self._show_error("Enter a weight in 'Grams' or 'Pts.'")
-            return
+            return False
         try:
             gram = float(gram_text)
             if gram < 0:
                 raise ValueError
         except ValueError:
             self._show_error("Invalid value - must be a positive number (e.g. 200 or 200.5)")
-            return
+            return False
 
         if ingredient_name and recipe_name:
             self._show_error("Select either an ingredient or a recipe, not both")
-            return
+            return False
         elif not ingredient_name and not recipe_name:
             self._show_error("Select an ingredient or a recipe")
-            return
-
-        if self.add_to_selected_check.get_active():
-            selection = self.journal_tree.get_selection()
-            model, paths = selection.get_selected_rows()
-            
-            if not paths:
-                self._show_error("Select a date in the journal to add the entry to.")
-                return
-                
-            path = paths[0]
-            treeiter = model.get_iter(path)
-            selected_date = model[treeiter][0]
-            
-            try:
-                datetime.strptime(selected_date, "%Y-%m-%d")
-            except ValueError:
-                self._show_error("Invalid date selected.")
-                return
-                
-            date = selected_date
-            timestamp = f"{date} 23:59:59"
-        else:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            date = datetime.now().strftime("%Y-%m-%d")
+            return False
 
         entry = {'timestamp': timestamp, 'date': date, 'weight': weight, 'gram': gram}
         
@@ -226,7 +146,7 @@ class JournalTab(Gtk.Box):
             item = next((i for i in self.ingredients_data if i['name'] == ingredient_name), None)
             if not item:
                 self._show_error("Selected ingredient not found")
-                return
+                return False
             factor = gram / 100
             entry.update({
                 'ate': ingredient_name,
@@ -243,24 +163,20 @@ class JournalTab(Gtk.Box):
             recipe = next((r for r in self.recipes_data if r['name'] == recipe_name), None)
             if not recipe:
                 self._show_error("Selected recipe not found")
-                return
+                return False
             
-            if self.pts_check.get_active():
-                # Calculate based on portions
+            if pts_active:
                 portions = recipe.get('portions', 1)
                 if portions <= 0:
                     portions = 1
                 
-                # Calculate total values for the recipe
                 total_kcal = sum(ing['kcal'] for ing in recipe['ingredients'])
                 total_gram = sum(ing['gram'] for ing in recipe['ingredients'])
                 
-                # Calculate values per portion
                 kcal_per_portion = total_kcal / portions
                 gram_per_portion = total_gram / portions
                 
-                # Calculate based on requested portions
-                factor = gram / portions  # gram is actually number of portions here
+                factor = gram / portions
                 entry.update({
                     'ate': recipe_name,
                     'kcal': kcal_per_portion * gram,
@@ -272,14 +188,13 @@ class JournalTab(Gtk.Box):
                     'salt': sum(ing['salt'] for ing in recipe['ingredients']) * factor,
                     'cost': sum(ing['cost'] for ing in recipe['ingredients']) * factor,
                     'pts': True,
-                    'gram': gram_per_portion * gram  # Store actual gram amount
+                    'gram': gram_per_portion * gram
                 })
             else:
-                # Original gram-based calculation
                 total_gram = sum(ing['gram'] for ing in recipe['ingredients'])
                 if total_gram == 0:
                     self._show_error("Recipe has no ingredients")
-                    return
+                    return False
                 factor = gram / total_gram
                 entry.update({
                     'ate': recipe_name,
@@ -304,6 +219,9 @@ class JournalTab(Gtk.Box):
             self.bmr_tab.update_bmr_plot()
         if self.macro_tab and hasattr(self.macro_tab, 'update_charts'):
             self.macro_tab.update_charts()
+
+        self.last_entered_weight = str(weight)
+        return True
 
     def on_key_press(self, widget, event):
         if event.keyval == Gdk.KEY_Delete:
@@ -390,7 +308,6 @@ class JournalTab(Gtk.Box):
         try:
             with open(os.path.join(self.db_dir, 'ingredients.json'), 'r', encoding='utf-8') as f:
                 self.ingredients_data = json.load(f).get('ingredients', [])
-            self._populate_ingredient_combo()
         except Exception as e:
             print(f"Error reloading ingredients: {e}")
 
@@ -398,9 +315,6 @@ class JournalTab(Gtk.Box):
         try:
             with open(os.path.join(self.db_dir, 'recipes.json'), 'r', encoding='utf-8') as f:
                 self.recipes_data = json.load(f).get('recipes', [])
-            self.recipe_combo.remove_all()
-            for recipe in sorted(self.recipes_data, key=lambda x: x['name'].lower()):
-                self.recipe_combo.append_text(recipe['name'])
         except Exception as e:
             print(f"Error reloading recipes: {e}")
 
@@ -414,9 +328,6 @@ class JournalTab(Gtk.Box):
                 self.last_weight = str(self.journal_data[-1].get('weight', '')) if self.journal_data else ''
             
             self._populate_journal_store()
-            if hasattr(self, 'weight_entry') and self.weight_entry and self.last_weight:
-                self.weight_entry.set_text(self.last_weight)
-            
             if self.weight_tab and hasattr(self.weight_tab, 'update_plot'):
                 self.weight_tab.update_plot()
             if self.bmr_tab and hasattr(self.bmr_tab, 'update_bmr_plot'):
@@ -425,22 +336,6 @@ class JournalTab(Gtk.Box):
                 self.macro_tab.update_charts()
         except Exception as e:
             print(f"Error reloading journal: {e}")
-
-    def _on_numeric_entry_changed(self, entry):
-        text = entry.get_text()
-        if not text or re.match(r'^[0-9]*[,.]?[0-9]*$', text):
-            return
-        pos = entry.get_position()
-        filtered = ''.join(c for c in text if c in '0123456789,.' and 
-                          (c != ',' or text.count(',') <= 1) and 
-                          (c != '.' or text.count('.') <= 1))
-        entry.set_text(filtered)
-        entry.set_position(min(pos, len(filtered)))
-
-    def _populate_ingredient_combo(self):
-        self.ingredient_combo.remove_all()
-        for ingredient in sorted(self.ingredients_data, key=lambda x: x['name'].lower()):
-            self.ingredient_combo.append_text(ingredient['name'])
 
     def on_diet_settings_clicked(self, widget):
         dialog = DietSettingsDialog(self.get_toplevel())
@@ -759,7 +654,7 @@ class JournalTab(Gtk.Box):
         col_index, total_kcal, bmr = data
         value = model.get_value(iter, col_index)
         
-        if col_index > 0:  # All columns except the first (Item name)
+        if col_index > 0:
             cell.set_property("text", f"{float(value):.1f}")
         else:
             cell.set_property("text", str(value))
