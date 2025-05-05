@@ -399,4 +399,4 @@ class AddEntryDialog(Gtk.Dialog):
             text=message
         )
         dialog.run()
-        dialog.destroy()
+        dialog.destroy(
