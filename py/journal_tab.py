@@ -579,15 +579,17 @@ class JournalTab(Gtk.Box):
             paths.sort(reverse=True)
             removed_indices = [p.get_indices()[0] for p in paths]
             
-            for idx in removed_indices:
-                if 0 <= idx < len(self.selected_date_entries):
-                    entry = self.selected_date_entries[idx]
-                    if entry in self.journal_data:
-                        self.journal_data.remove(entry)
+            # Create a copy of entries to remove
+            entries_to_remove = [self.selected_date_entries[idx] for idx in removed_indices if 0 <= idx < len(self.selected_date_entries)]
+            
+            # Remove entries from journal_data
+            for entry in entries_to_remove:
+                if entry in self.journal_data:
+                    self.journal_data.remove(entry)
             
             self._save_journal()
-            self._refresh_journal_view()
             
+            # Update the detail store
             self.selected_date_entries = [e for e in self.journal_data if e['date'] == selected_date]
             self.selected_date_entries.sort(key=lambda x: x['timestamp'], reverse=True)
             self.detail_store.clear()
@@ -604,6 +606,9 @@ class JournalTab(Gtk.Box):
                     entry.get('salt', 0),
                     entry.get('cost', 0)
                 ])
+            
+            # Update the main journal view
+            self._refresh_journal_view()
         
         selection.unselect_all()
         self.remove_button.set_sensitive(False)
