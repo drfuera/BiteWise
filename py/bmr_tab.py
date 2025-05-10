@@ -45,12 +45,12 @@ class BMRGraph(Gtk.DrawingArea):
         bmr_values = [self.bmr_kcal_data[d]['bmr'] for d in dates]
         kcal_values = [self.bmr_kcal_data[d]['kcal'] for d in dates]
         
-        # Calculate cumulative average of calories
+        # Calculate 7-day moving average of calories
         avg_kcal_values = []
-        running_total = 0
-        for i, kcal in enumerate(kcal_values):
-            running_total += kcal
-            avg_kcal_values.append(running_total / (i + 1))
+        for i in range(len(kcal_values)):
+            start_idx = max(0, i - 6)  # Go back up to 6 days to get 7 days total
+            window = kcal_values[start_idx:i+1]
+            avg_kcal_values.append(sum(window) / len(window))
         
         if not dates or not bmr_values or not kcal_values:
             self._draw_no_data(cr, width, height, text_color, "Incomplete BMR/Calorie data")
@@ -258,8 +258,8 @@ class BMRGraph(Gtk.DrawingArea):
         cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         cr.set_font_size(10)
         
-        # Main legend (BMR, Calories, and Average Calories)
-        labels = ["BMR", "Calories", "Avg Calories"]
+        # Main legend (BMR, Calories, and 7-day Average Calories)
+        labels = ["BMR", "Calories", "7-day Avg Calories"]
         colors = [bmr_color, kcal_color, avg_kcal_color]
         label_widths = [cr.text_extents(label)[2] for label in labels]
         max_text_height = max(cr.text_extents(label)[3] for label in labels)
@@ -288,7 +288,7 @@ class BMRGraph(Gtk.DrawingArea):
         current_x = legend_x
         for i, (label, color) in enumerate(zip(labels, colors)):
             cr.set_source_rgba(*color)
-            if label == "Avg Calories":
+            if label == "7-day Avg Calories":
                 cr.set_line_width(2)
                 cr.move_to(current_x, legend_y + legend_swatch_height/2)
                 cr.line_to(current_x + legend_swatch_size, legend_y + legend_swatch_height/2)
@@ -419,7 +419,7 @@ class BMRGraph(Gtk.DrawingArea):
                        (f"Weight: {weight} kg\n" if weight else "") +
                        f"BMR: {bmr:.0f} kcal\n" +
                        f"Calories: {kcal:.0f} kcal\n" +
-                       f"Avg Calories: {avg_kcal:.0f} kcal\n\n" +
+                       f"7-day Avg Calories: {avg_kcal:.0f} kcal\n\n" +
                        "\n".join(pal_comparisons))
         tooltip.set_markup(tooltip_text)
         return True
