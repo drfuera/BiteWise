@@ -45,6 +45,13 @@ class BMRGraph(Gtk.DrawingArea):
         bmr_values = [self.bmr_kcal_data[d]['bmr'] for d in dates]
         kcal_values = [self.bmr_kcal_data[d]['kcal'] for d in dates]
         
+        # Calculate cumulative average of calories
+        avg_kcal_values = []
+        running_total = 0
+        for i, kcal in enumerate(kcal_values):
+            running_total += kcal
+            avg_kcal_values.append(running_total / (i + 1))
+        
         if not dates or not bmr_values or not kcal_values:
             self._draw_no_data(cr, width, height, text_color, "Incomplete BMR/Calorie data")
             return
@@ -55,8 +62,8 @@ class BMRGraph(Gtk.DrawingArea):
         for pal in pal_levels:
             pal_values.extend([bmr * pal for bmr in bmr_values])
             
-        min_value = min(min(bmr_values), min(kcal_values), min(pal_values)) * 0.95
-        max_value = max(max(bmr_values), max(kcal_values), max(pal_values)) * 1.05
+        min_value = min(min(bmr_values), min(kcal_values), min(avg_kcal_values), min(pal_values)) * 0.95
+        max_value = max(max(bmr_values), max(kcal_values), max(avg_kcal_values), max(pal_values)) * 1.05
         value_range = max_value - min_value if max_value != min_value else max_value or 1
         
         left_margin, right_margin = 60, 60
@@ -71,6 +78,7 @@ class BMRGraph(Gtk.DrawingArea):
         
         bmr_color = (0.4, 0.7, 1.0, 1.0)
         kcal_color = (1.0, 0.5, 0.0, 1.0)
+        avg_kcal_color = (1.0, 0.8, 0.0, 1.0)  # Gold color for average
         
         # Draw PAL lines first (so they're behind the main lines)
         pal_colors = [
@@ -110,26 +118,32 @@ class BMRGraph(Gtk.DrawingArea):
                                    graph_width, graph_height, min_value, value_range, bmr_color)
         kcal_points = self._draw_line(cr, dates, kcal_values, left_margin, height, bottom_margin, 
                                     graph_width, graph_height, min_value, value_range, kcal_color)
+        avg_kcal_points = self._draw_line(cr, dates, avg_kcal_values, left_margin, height, bottom_margin,
+                                         graph_width, graph_height, min_value, value_range, avg_kcal_color, dash=[5, 3])
         
         if len(dates) <= 100:
             self._draw_points(cr, bmr_points, bmr_color)
             self._draw_points(cr, kcal_points, kcal_color)
+            # Don't draw points for average line to keep it clean
         
         if self.hover_point is not None and self.hover_point < len(bmr_points):
             self._draw_highlight(cr, bmr_points[self.hover_point], bmr_color)
             self._draw_highlight(cr, kcal_points[self.hover_point], kcal_color)
+            self._draw_highlight(cr, avg_kcal_points[self.hover_point], avg_kcal_color)
             # Highlight all PAL points for this date
             for pal, points in self.pal_points.items():
                 if self.hover_point < len(points):
                     self._draw_highlight(cr, points[self.hover_point], pal_colors[pal_levels.index(pal)], radius=5)
         
-        self._draw_legend(cr, width, bmr_color, kcal_color, text_color, pal_levels, pal_colors, pal_descriptions)
+        self._draw_legend(cr, width, bmr_color, kcal_color, text_color, pal_levels, pal_colors, pal_descriptions, avg_kcal_color)
         
         self.graph_bmr_points = bmr_points
         self.graph_kcal_points = kcal_points
+        self.graph_avg_kcal_points = avg_kcal_points
         self.graph_dates = dates
         self.graph_bmr = bmr_values
         self.graph_kcal = kcal_values
+        self.graph_avg_kcal = avg_kcal_values
         self.pal_levels = pal_levels
     
     def _draw_no_data(self, cr, width, height, text_color, text="No BMR/Calorie data available"):
@@ -200,10 +214,13 @@ class BMRGraph(Gtk.DrawingArea):
             cr.move_to(x_pos - extents.width/2, height - bottom_margin + extents.height + 5)
             cr.show_text(label)
     
-    def _draw_line(self, cr, dates, values, left_margin, height, bottom_margin, graph_width, graph_height, min_value, value_range, color):
+    def _draw_line(self, cr, dates, values, left_margin, height, bottom_margin, graph_width, graph_height, min_value, value_range, color, dash=None):
         points = []
         cr.set_source_rgba(*color)
         cr.set_line_width(2)
+        
+        if dash:
+            cr.set_dash(dash)
         
         for i, value in enumerate(values):
             x_pos = left_margin + (i * graph_width / max(len(dates) - 1, 1))
@@ -216,6 +233,8 @@ class BMRGraph(Gtk.DrawingArea):
                 cr.line_to(x_pos, y_pos)
         
         cr.stroke()
+        if dash:
+            cr.set_dash([])  # Reset dash
         return points
     
     def _draw_points(self, cr, points, color, radius=5):
@@ -229,7 +248,7 @@ class BMRGraph(Gtk.DrawingArea):
         cr.arc(point[0], point[1], radius, 0, 2 * pi)
         cr.fill()
     
-    def _draw_legend(self, cr, width, bmr_color, kcal_color, text_color, pal_levels=None, pal_colors=None, pal_descriptions=None):
+    def _draw_legend(self, cr, width, bmr_color, kcal_color, text_color, pal_levels=None, pal_colors=None, pal_descriptions=None, avg_kcal_color=None):
         legend_swatch_size = 12
         legend_swatch_height = 10
         legend_margin = 5
@@ -239,9 +258,9 @@ class BMRGraph(Gtk.DrawingArea):
         cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         cr.set_font_size(10)
         
-        # Main legend (BMR and Calories)
-        labels = ["BMR", "Calories"]
-        colors = [bmr_color, kcal_color]
+        # Main legend (BMR, Calories, and Average Calories)
+        labels = ["BMR", "Calories", "Avg Calories"]
+        colors = [bmr_color, kcal_color, avg_kcal_color]
         label_widths = [cr.text_extents(label)[2] for label in labels]
         max_text_height = max(cr.text_extents(label)[3] for label in labels)
         
@@ -269,8 +288,14 @@ class BMRGraph(Gtk.DrawingArea):
         current_x = legend_x
         for i, (label, color) in enumerate(zip(labels, colors)):
             cr.set_source_rgba(*color)
-            cr.rectangle(current_x, legend_y + 1, legend_swatch_size, legend_swatch_height)
-            cr.fill()
+            if label == "Avg Calories":
+                cr.set_line_width(2)
+                cr.move_to(current_x, legend_y + legend_swatch_height/2)
+                cr.line_to(current_x + legend_swatch_size, legend_y + legend_swatch_height/2)
+                cr.stroke()
+            else:
+                cr.rectangle(current_x, legend_y + 1, legend_swatch_size, legend_swatch_height)
+                cr.fill()
             
             cr.set_source_rgba(1, 1, 1, 1)
             cr.move_to(current_x + legend_swatch_size + legend_text_spacing, 
@@ -341,6 +366,7 @@ class BMRGraph(Gtk.DrawingArea):
         all_points = []
         all_points.extend(self.graph_bmr_points)
         all_points.extend(self.graph_kcal_points)
+        all_points.extend(self.graph_avg_kcal_points)
         for pal_points in self.pal_points.values():
             all_points.extend(pal_points)
         
@@ -368,6 +394,7 @@ class BMRGraph(Gtk.DrawingArea):
         date = self.graph_dates[self.hover_point]
         bmr = self.graph_bmr[self.hover_point]
         kcal = self.graph_kcal[self.hover_point]
+        avg_kcal = self.graph_avg_kcal[self.hover_point]
         weight = next((e.get('weight') for e in self.journal_data if e.get('date') == date), None)
         
         try:
@@ -390,7 +417,9 @@ class BMRGraph(Gtk.DrawingArea):
         
         tooltip_text = (f"<b>{date_str}</b>\n" + 
                        (f"Weight: {weight} kg\n" if weight else "") +
-                       f"BMR: {bmr:.0f} kcal\nCalories: {kcal:.0f} kcal\n\n" +
+                       f"BMR: {bmr:.0f} kcal\n" +
+                       f"Calories: {kcal:.0f} kcal\n" +
+                       f"Avg Calories: {avg_kcal:.0f} kcal\n\n" +
                        "\n".join(pal_comparisons))
         tooltip.set_markup(tooltip_text)
         return True
