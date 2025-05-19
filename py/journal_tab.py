@@ -6,7 +6,7 @@ from datetime import datetime
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk
 from .diet_guidelines import get_diet_colors, calculate_bmr, calculate_remaining
-from .journal_dialog import DietSettingsDialog, AddEntryDialog
+from .journal_dialog import DietSettingsDialog, AddEntryDialog, AddWorkoutDialog
 
 class JournalTab(Gtk.Box):
     def __init__(self, window_width, window_height):
@@ -65,7 +65,6 @@ class JournalTab(Gtk.Box):
             self.last_weight = ''
 
     def _setup_ui(self):
-        # Create the table first
         columns = [
             ("Date", 0.12), ("Grams", 0.08), ("Calories", 0.10), ("Carbs", 0.10),
             ("Sugar", 0.10), ("Fat", 0.10), ("Protein", 0.10), ("Fiber", 0.10),
@@ -90,7 +89,6 @@ class JournalTab(Gtk.Box):
         frame.add(scrolled_window)
         self.pack_start(frame, True, True, 0)
 
-        # Create button box at the bottom
         button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         self.pack_start(button_box, False, False, 0)
 
@@ -100,11 +98,19 @@ class JournalTab(Gtk.Box):
 
         button_box.pack_start(Gtk.Box(), True, True, 0)
 
+        self.add_workout_button = Gtk.Button(label="Add workout")
+        self.add_workout_button.connect("clicked", self.on_add_workout_clicked)
+        button_box.pack_start(self.add_workout_button, False, False, 0)
+
         self.add_button = Gtk.Button(label="Add to journal")
         self.add_button.connect("clicked", self.on_add_entry_clicked)
         button_box.pack_start(self.add_button, False, False, 0)
 
         self._populate_journal_store()
+
+    def on_add_workout_clicked(self, widget):
+        dialog = AddWorkoutDialog(self)
+        dialog.run()
 
     def on_add_entry_clicked(self, widget):
         dialog = AddEntryDialog(self)
@@ -579,17 +585,14 @@ class JournalTab(Gtk.Box):
             paths.sort(reverse=True)
             removed_indices = [p.get_indices()[0] for p in paths]
             
-            # Create a copy of entries to remove
             entries_to_remove = [self.selected_date_entries[idx] for idx in removed_indices if 0 <= idx < len(self.selected_date_entries)]
             
-            # Remove entries from journal_data
             for entry in entries_to_remove:
                 if entry in self.journal_data:
                     self.journal_data.remove(entry)
             
             self._save_journal()
             
-            # Update the detail store
             self.selected_date_entries = [e for e in self.journal_data if e['date'] == selected_date]
             self.selected_date_entries.sort(key=lambda x: x['timestamp'], reverse=True)
             self.detail_store.clear()
@@ -607,7 +610,6 @@ class JournalTab(Gtk.Box):
                     entry.get('cost', 0)
                 ])
             
-            # Update the main journal view
             self._refresh_journal_view()
         
         selection.unselect_all()
