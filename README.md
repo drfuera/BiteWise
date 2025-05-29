@@ -24,6 +24,8 @@ Here are some visual previews of BiteWise in action:
 *   ![BiteWise Screenshot 6](https://github.com/drfuera/BiteWise/blob/main/screenshots/6.png)
 *   ![BiteWise Screenshot 7](https://github.com/drfuera/BiteWise/blob/main/screenshots/7.png)
 *   ![BiteWise Screenshot 8](https://github.com/drfuera/BiteWise/blob/main/screenshots/8.png)
+*   ![BiteWise Screenshot 8](https://github.com/drfuera/BiteWise/blob/main/screenshots/9.png)
+*   ![BiteWise Screenshot 8](https://github.com/drfuera/BiteWise/blob/main/screenshots/10.png)
 
 ## Getting Started
 
