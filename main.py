@@ -164,6 +164,7 @@ from py.costs_tab import CostsTab
 from py.youtube_tab import YouTubeTab
 from py.about_tab import AboutTab
 from py.nutrition_tab import NutritionTab
+from py.timeline_tab import TimelineTab
 
 class RecipeManager(Gtk.Window):
     def __init__(self):
@@ -192,6 +193,7 @@ class RecipeManager(Gtk.Window):
             (self.weight_tab, "Weight"),
             (self.bmr_tab, "BMR & Kcal"),
             (self.macro_tab, "Macro"),
+            (TimelineTab(1200, 780), "Timeline"),
             (NutritionTab(1200, 780), "Nutrition"),
             (CostsTab(1200, 780), "Costs"),
             (YouTubeTab(1200, 780), "Video Cookbook"),
