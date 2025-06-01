@@ -90,6 +90,7 @@ class RecipesTab(Gtk.Box):
             ("Fat", 0.08), ("Protein", 0.12), ("Fiber", 0.1), ("Salt", 0.08), ("Cost", 0.04)
         ], sortable=True)
         self.ingredient_store.set_sort_column_id(0, Gtk.SortType.ASCENDING)
+        self.ingredient_tree.connect("row-activated", self._on_ingredient_row_activated)
 
         self.scrolled_window = Gtk.ScrolledWindow()
         self.scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -193,6 +194,67 @@ class RecipesTab(Gtk.Box):
         self.right_container.pack_start(instructions_frame, True, True, 0)
 
         self.lower_container.add2(self.right_container)
+
+    def _on_ingredient_row_activated(self, treeview, path, column):
+        model = treeview.get_model()
+        treeiter = model.get_iter(path)
+        if treeiter is None:
+            return
+            
+        ingredient_name = model.get_value(treeiter, 0)
+        current_gram = model.get_value(treeiter, 1)
+        
+        dialog = Gtk.Dialog(
+            title="Modify Ingredient",
+            transient_for=self.get_toplevel(),
+            flags=0,
+            buttons=("Cancel", Gtk.ResponseType.CANCEL, "OK", Gtk.ResponseType.OK)
+        )
+        dialog.set_default_size(300, 100)
+        
+        content_area = dialog.get_content_area()
+        content_area.set_margin_start(10)
+        content_area.set_margin_end(10)
+        content_area.set_margin_top(10)
+        content_area.set_margin_bottom(10)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        content_area.pack_start(box, True, True, 0)
+        
+        label = Gtk.Label(label=f"Modify grams for {ingredient_name}:")
+        box.pack_start(label, True, True, 0)
+        
+        entry = Gtk.Entry()
+        entry.set_text(str(current_gram))
+        entry.set_activates_default(True)
+        box.pack_start(entry, True, True, 0)
+        
+        dialog.set_default_response(Gtk.ResponseType.OK)
+        dialog.show_all()
+        
+        response = dialog.run()
+        new_gram = entry.get_text()
+        dialog.destroy()
+        
+        if response == Gtk.ResponseType.OK and new_gram:
+            try:
+                new_gram_value = float(new_gram)
+                if new_gram_value > 0:
+                    ingredient = next((i for i in self.ingredients_data if i['name'] == ingredient_name), None)
+                    if ingredient:
+                        factor = new_gram_value / 100
+                        model.set_value(treeiter, 1, new_gram_value)
+                        model.set_value(treeiter, 2, ingredient['kcal'] * factor)
+                        model.set_value(treeiter, 3, ingredient['carbs'] * factor)
+                        model.set_value(treeiter, 4, ingredient['sugar'] * factor)
+                        model.set_value(treeiter, 5, ingredient['fat'] * factor)
+                        model.set_value(treeiter, 6, ingredient['protein'] * factor)
+                        model.set_value(treeiter, 7, ingredient['fiber'] * factor)
+                        model.set_value(treeiter, 8, ingredient['salt'] * factor)
+                        model.set_value(treeiter, 9, ingredient['cost'] * factor)
+                        self._update_per_portion_values()
+            except ValueError:
+                self._show_error("Invalid weight value")
 
     def _populate_ingredient_combo(self):
         """Fill ingredient_combo with available ingredients"""
