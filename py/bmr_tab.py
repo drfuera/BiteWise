@@ -92,9 +92,9 @@ class BMRGraph(Gtk.DrawingArea):
         ]
         
         pal_descriptions = [
-            "Complete rest (bedridden)",
-            "Very low activity (sedentary)",
-            "Low activity (office work)",
+            "Minimal activity (sedentary)",
+            "Very low activity (mostly sitting)",
+            "Low activity (office work, light walking)",
             "Moderate activity (light exercise)",
             "Active (regular exercise)",
             "Very active (intense exercise)",
