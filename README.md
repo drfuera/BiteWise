@@ -106,3 +106,5 @@ This project is licensed under the [MIT License](LICENSE).
 ## Contact
 
 If you have any questions or suggestions, feel free to reach out!
+
+![GitHub release](https://img.shields.io/github/v/release/drfuera/BiteWise)  ![GitHub downloads](https://img.shields.io/github/downloads/drfuera/BiteWise/total)  ![License](https://img.shields.io/badge/License-MIT-red)  
