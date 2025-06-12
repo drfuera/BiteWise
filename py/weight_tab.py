@@ -1,7 +1,7 @@
 import os
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import OrderedDict
 from math import pi
 import gi
@@ -24,6 +24,28 @@ class WeightGraph(Gtk.DrawingArea):
         self.add_events(Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.LEAVE_NOTIFY_MASK)
         self.connect("motion-notify-event", self.on_motion_notify)
         self.connect("leave-notify-event", self.on_leave_notify)
+
+    def calculate_averages(self):
+        if len(self.weights_data) < 2:
+            return None, None, None
+        
+        dates = sorted(self.weights_data.keys())
+        weights = [self.weights_data[date] for date in dates]
+        
+        # Calculate daily average
+        total_days = (datetime.strptime(dates[-1], "%Y-%m-%d") - datetime.strptime(dates[0], "%Y-%m-%d")).days
+        if total_days == 0:
+            daily_avg = 0
+        else:
+            daily_avg = (weights[-1] - weights[0]) / total_days
+        
+        # Calculate weekly average (7 days)
+        weekly_avg = daily_avg * 7
+        
+        # Calculate monthly average (30 days)
+        monthly_avg = daily_avg * 30
+        
+        return daily_avg, weekly_avg, monthly_avg
 
     def on_draw(self, widget, cr):
         width, height = widget.get_allocated_width(), widget.get_allocated_height()
@@ -52,7 +74,7 @@ class WeightGraph(Gtk.DrawingArea):
         weight_range = max_weight - min_weight
         
         left_margin, right_margin = 60, 60
-        top_margin, bottom_margin = 80, 60
+        top_margin, bottom_margin = 100, 60  # Increased top_margin from 80 to 100
         graph_width = max(width - left_margin - right_margin, 1)
         graph_height = max(height - top_margin - bottom_margin, 1)
         
@@ -61,6 +83,15 @@ class WeightGraph(Gtk.DrawingArea):
         title = "Weight development"
         cr.move_to(width/2 - cr.text_extents(title).width/2, 30)
         cr.show_text(title)
+        
+        # Display averages if we have enough data
+        daily_avg, weekly_avg, monthly_avg = self.calculate_averages()
+        if daily_avg is not None:
+            avg_text = f"Avg change: {daily_avg:+.2f} kg/day, {weekly_avg:+.2f} kg/week, {monthly_avg:+.2f} kg/month"
+            cr.set_font_size(10)
+            extents = cr.text_extents(avg_text)
+            cr.move_to(width/2 - extents.width/2, 55)  # Moved down from 50 to 55
+            cr.show_text(avg_text)
         
         cr.set_source_rgba(text_color.red, text_color.green, text_color.blue, 0.5)
         cr.set_line_width(1)
@@ -134,7 +165,7 @@ class WeightGraph(Gtk.DrawingArea):
         extents = cr.text_extents(label)
         total_width = 12 + 5 + extents.width
         
-        legend_x, legend_y = (width - total_width) / 2, 49
+        legend_x, legend_y = (width - total_width) / 2, 69  # Increased from 49 to 69
         cr.set_source_rgba(0.2, 0.2, 0.2, 0.8)
         cr.rectangle(legend_x - 5, legend_y - 5, total_width + 10, extents.height + 10)
         cr.fill()
