@@ -5,6 +5,121 @@ import sys
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GdkPixbuf
 
+class AddIngredientDialog(Gtk.Dialog):
+    def __init__(self, parent, ingredients_data):
+        super().__init__(title="Add Ingredient", transient_for=parent, modal=True)
+        self.set_default_size(400, 400)
+        self.ingredients_data = ingredients_data
+        self.filtered_ingredients = ingredients_data.copy()
+        
+        self.filter_entry = Gtk.Entry(placeholder_text="Filter ingredients...")
+        self.filter_entry.connect("changed", self.on_filter_changed)
+
+        self.ingredients_list = Gtk.ListStore(str)
+        self.ingredients_view = Gtk.TreeView(model=self.ingredients_list)
+        self.ingredients_view.set_headers_visible(False)
+        renderer = Gtk.CellRendererText()
+        column = Gtk.TreeViewColumn("Ingredients", renderer, text=0)
+        self.ingredients_view.append_column(column)
+        
+        self.gram_entry = Gtk.Entry(placeholder_text="Grams", width_chars=7)
+        self.gram_entry.connect("activate", self.on_add_clicked)
+
+        content_area = self.get_content_area()
+        content_area.set_spacing(10)
+        content_area.set_margin_top(10)
+        content_area.set_margin_bottom(10)
+        content_area.set_margin_start(10)
+        content_area.set_margin_end(10)
+
+        main_frame = Gtk.Frame(label="Add Ingredient")
+        content_area.pack_start(main_frame, True, True, 0)
+
+        frame_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin=10)
+        main_frame.add(frame_box)
+
+        frame_box.pack_start(self.filter_entry, False, False, 0)
+
+        scrolled_window = Gtk.ScrolledWindow()
+        scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled_window.add(self.ingredients_view)
+        frame_box.pack_start(scrolled_window, True, True, 0)
+
+        grams_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        frame_box.pack_start(grams_box, False, False, 0)
+        grams_box.pack_start(self.gram_entry, False, False, 0)
+        
+        button_box = Gtk.Box(spacing=10)
+        frame_box.pack_start(button_box, False, False, 0)
+
+        cancel_button = Gtk.Button(label="Cancel")
+        cancel_button.connect("clicked", lambda b: self.destroy())
+        button_box.pack_start(cancel_button, False, False, 0)
+
+        button_box.pack_start(Gtk.Box(), True, True, 0)
+
+        add_button = Gtk.Button(label="Add")
+        add_button.connect("clicked", self.on_add_clicked)
+        button_box.pack_start(add_button, False, False, 0)
+
+        self.update_lists()
+        self.show_all()
+
+    def update_lists(self):
+        self.ingredients_list.clear()
+        for item in self.filtered_ingredients:
+            self.ingredients_list.append([item['name']])
+
+    def on_filter_changed(self, entry):
+        filter_text = entry.get_text().lower()
+        if not filter_text:
+            self.filtered_ingredients = self.ingredients_data.copy()
+        else:
+            self.filtered_ingredients = [
+                item for item in self.ingredients_data 
+                if filter_text in item['name'].lower()
+            ]
+        self.update_lists()
+
+    def on_add_clicked(self, widget):
+        selection = self.ingredients_view.get_selection()
+        model, treeiter = selection.get_selected()
+        
+        if not treeiter:
+            self._show_error("Select an ingredient")
+            return
+            
+        ingredient_name = model.get_value(treeiter, 0)
+        gram_text = self.gram_entry.get_text().strip().replace(',', '.')
+        
+        if not gram_text:
+            self._show_error("Enter a weight in grams")
+            return
+            
+        try:
+            gram = float(gram_text)
+            if gram <= 0:
+                raise ValueError
+        except ValueError:
+            self._show_error("Invalid value - must be a positive number (e.g. 200 or 200.5)")
+            return
+            
+        self.ingredient_name = ingredient_name
+        self.gram = gram
+        self.response(Gtk.ResponseType.OK)
+        self.destroy()
+
+    def _show_error(self, message):
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text=message
+        )
+        dialog.run()
+        dialog.destroy()
+
 class RecipesTab(Gtk.Box):
     def __init__(self, window_width, window_height, parent=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -13,12 +128,10 @@ class RecipesTab(Gtk.Box):
         self.db_dir = self._get_db_dir()
         self.ingredients_data = []
         self.recipes_data = []
+        self.current_recipe = None
         
-        # Initialize all widgets first
         self._init_widgets(window_width)
-        
-        # Then load data
-        self.reload_ingredients()
+        self._load_ingredients()
         self._load_recipes()
         
         self.connect("map", self._on_map)
@@ -35,18 +148,55 @@ class RecipesTab(Gtk.Box):
         os.makedirs(db_dir, exist_ok=True)
         return db_dir
 
+    def _load_ingredients(self):
+        try:
+            ingredients_path = os.path.join(self.db_dir, 'ingredients.json')
+            with open(ingredients_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                self.ingredients_data = data['ingredients']
+        except Exception as e:
+            print(f"Error loading ingredients from {ingredients_path}: {e}")
+
+    def _load_recipes(self):
+        try:
+            recipes_path = os.path.join(self.db_dir, 'recipes.json')
+            with open(recipes_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                self.recipes_data = data['recipes']
+                self._update_recipe_store()
+        except Exception as e:
+            print(f"Error loading recipes from {recipes_path}: {e}")
+
+    def _update_recipe_store(self):
+        self.recipe_store.clear()
+        for recipe in sorted(self.recipes_data, key=lambda x: x['name'].lower()):
+            ingredients = recipe['ingredients']
+            self.recipe_store.append([
+                recipe['name'],
+                sum(ing['gram'] for ing in ingredients),
+                sum(ing['kcal'] for ing in ingredients),
+                sum(ing['carbs'] for ing in ingredients),
+                sum(ing['sugar'] for ing in ingredients),
+                sum(ing['fat'] for ing in ingredients),
+                sum(ing['protein'] for ing in ingredients),
+                sum(ing['fiber'] for ing in ingredients),
+                sum(ing['salt'] for ing in ingredients),
+                sum(ing['cost'] for ing in ingredients)
+            ])
+
     def _init_widgets(self, window_width):
-        # Recipe list setup
         self.recipe_store = Gtk.ListStore(str, float, float, float, float, float, float, float, float, float)
         self.recipe_tree = Gtk.TreeView(model=self.recipe_store)
         self._create_columns(self.recipe_tree, [
             ("Recipe Name", 0.4), ("Gram", 0.07), ("Kcal", 0.07), ("Carbs", 0.07), ("Sugar", 0.07),
             ("Fat", 0.07), ("Protein", 0.07), ("Fiber", 0.07), ("Salt", 0.07), ("Cost", 0.04)
         ], sortable=True)
-        self.recipe_tree.get_selection().connect("changed", self.on_recipe_selected)
+        
+        selection = self.recipe_tree.get_selection()
+        selection.set_mode(Gtk.SelectionMode.SINGLE)
+        self.recipe_tree.connect("row-activated", self.on_recipe_activated)
         self.recipe_store.set_sort_column_id(0, Gtk.SortType.ASCENDING)
 
-        # Top section with recipe list
         recipe_scrolled = Gtk.ScrolledWindow()
         recipe_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         recipe_scrolled.add(self.recipe_tree)
@@ -54,17 +204,14 @@ class RecipesTab(Gtk.Box):
         recipe_frame.add(recipe_scrolled)
         self.pack_start(recipe_frame, True, True, 0)
 
-        # Button box
         button_box = Gtk.Box(spacing=10)
         self.pack_start(button_box, False, False, 0)
         
-        # Initialize buttons
         self.delete_btn = Gtk.Button(label="Delete Recipe")
         self.new_btn = Gtk.Button(label="New Recipe")
         self.copy_btn = Gtk.Button(label="Copy Recipe")
         self.save_btn = Gtk.Button(label="Save Recipe")
         
-        # Connect signals after all widgets are initialized
         self.delete_btn.connect("clicked", self._on_delete_recipe_clicked)
         self.new_btn.connect("clicked", self._on_new_recipe_clicked)
         self.copy_btn.connect("clicked", self._on_copy_recipe_clicked)
@@ -73,16 +220,13 @@ class RecipesTab(Gtk.Box):
         for btn in [self.delete_btn, self.new_btn, self.copy_btn, self.save_btn]:
             button_box.pack_start(btn, True, True, 0)
 
-        # Lower container with split pane
         self.lower_container = Gtk.HPaned()
         self.lower_container.set_position(int(window_width * 0.618))
         self.lower_container.connect("size-allocate", self._update_paned_position)
         self.pack_start(self.lower_container, True, True, 0)
 
-        # Left container setup
         self.left_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         
-        # Ingredients table
         self.ingredient_store = Gtk.ListStore(str, float, float, float, float, float, float, float, float, float)
         self.ingredient_tree = Gtk.TreeView(model=self.ingredient_store)
         self._create_columns(self.ingredient_tree, [
@@ -105,7 +249,6 @@ class RecipesTab(Gtk.Box):
         table_frame.add(self.scrolled_window)
         self.left_container.pack_start(table_frame, True, True, 0)
 
-        # Header row
         self.header_store = Gtk.ListStore(str)
         self.header_tree = Gtk.TreeView(model=self.header_store)
         self._create_header_columns(self.header_tree, [
@@ -123,7 +266,6 @@ class RecipesTab(Gtk.Box):
         header_frame.add(self.header_tree)
         self.left_container.pack_start(header_frame, False, False, 0)
 
-        # Controls
         control_box = Gtk.Box(spacing=10)
         control_box.set_margin_start(5)
         control_box.set_margin_end(5)
@@ -133,21 +275,13 @@ class RecipesTab(Gtk.Box):
         self.delete_ingredient_btn.connect("clicked", self._on_delete_ingredient_clicked)
         control_box.pack_start(self.delete_ingredient_btn, False, False, 0)
         
-        self.ingredient_combo = Gtk.ComboBoxText()
-        self.gram_entry = Gtk.Entry()
-        self.gram_entry.set_placeholder_text("Gram")
-        self.gram_entry.set_width_chars(5)
         self.add_ingredient_btn = Gtk.Button(label="Add Ingredient")
         self.add_ingredient_btn.connect("clicked", self._on_add_ingredient_clicked)
-        
         control_box.pack_end(self.add_ingredient_btn, False, False, 0)
-        control_box.pack_end(self.gram_entry, False, False, 0)
-        control_box.pack_end(self.ingredient_combo, False, False, 0)
         
         self.left_container.pack_start(control_box, False, False, 0)
         self.lower_container.add1(self.left_container)
 
-        # Right container setup
         self.right_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
 
         text_fields_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -194,6 +328,53 @@ class RecipesTab(Gtk.Box):
         self.right_container.pack_start(instructions_frame, True, True, 0)
 
         self.lower_container.add2(self.right_container)
+
+    def on_recipe_activated(self, treeview, path, column):
+        model = treeview.get_model()
+        treeiter = model.get_iter(path)
+        if treeiter is not None:
+            self._load_recipe_details(model[treeiter][0])
+
+    def _load_recipe_details(self, recipe_name):
+        self.current_recipe = recipe_name
+        for recipe in self.recipes_data:
+            if recipe['name'] == recipe_name:
+                self.recipe_name_entry.set_text(recipe['name'])
+                portions = recipe.get('portions', 1)
+                self.portions_entry.set_text(str(portions) if portions != 1 else "")
+                self.portions_entry.set_placeholder_text("Pts.")
+                
+                buffer = self.instructions.get_buffer()
+                buffer.set_text(recipe.get('instructions', ''))
+                
+                self.ingredient_store.clear()
+                totals = [0]*9
+                for ingredient in recipe['ingredients']:
+                    self.ingredient_store.append([
+                        ingredient['name'],
+                        ingredient['gram'],
+                        ingredient['kcal'],
+                        ingredient['carbs'],
+                        ingredient['sugar'],
+                        ingredient['fat'],
+                        ingredient['protein'],
+                        ingredient['fiber'],
+                        ingredient['salt'],
+                        ingredient['cost']
+                    ])
+                    totals[0] += ingredient['gram']
+                    totals[1] += ingredient['kcal']
+                    totals[2] += ingredient['carbs']
+                    totals[3] += ingredient['sugar']
+                    totals[4] += ingredient['fat']
+                    totals[5] += ingredient['protein']
+                    totals[6] += ingredient['fiber']
+                    totals[7] += ingredient['salt']
+                    totals[8] += ingredient['cost']
+                
+                per_portion_values = [t/portions for t in totals]
+                self._update_header_columns(per_portion_values)
+                break
 
     def _on_ingredient_row_activated(self, treeview, path, column):
         model = treeview.get_model()
@@ -253,122 +434,63 @@ class RecipesTab(Gtk.Box):
                         model.set_value(treeiter, 8, ingredient['salt'] * factor)
                         model.set_value(treeiter, 9, ingredient['cost'] * factor)
                         self._update_per_portion_values()
+                        self._update_current_recipe()
             except ValueError:
                 self._show_error("Invalid weight value")
 
-    def _populate_ingredient_combo(self):
-        """Fill ingredient_combo with available ingredients"""
-        self.ingredient_combo.remove_all()
-        sorted_ingredients = sorted(self.ingredients_data, key=lambda x: x['name'].lower())
-        for ingredient in sorted_ingredients:
-            self.ingredient_combo.append_text(ingredient['name'])
-
-    def reload_recipes(self):
-        """Reload recipes from file and refresh the UI"""
-        try:
-            recipes_path = os.path.join(self.db_dir, 'recipes.json')
-            with open(recipes_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                self.recipes_data = data['recipes']
-                
-                self.recipe_store.clear()
-                for recipe in sorted(data['recipes'], key=lambda x: x['name'].lower()):
-                    ingredients = recipe['ingredients']
-                    self.recipe_store.append([
-                        recipe['name'],
-                        sum(ing['gram'] for ing in ingredients),
-                        sum(ing['kcal'] for ing in ingredients),
-                        sum(ing['carbs'] for ing in ingredients),
-                        sum(ing['sugar'] for ing in ingredients),
-                        sum(ing['fat'] for ing in ingredients),
-                        sum(ing['protein'] for ing in ingredients),
-                        sum(ing['fiber'] for ing in ingredients),
-                        sum(ing['salt'] for ing in ingredients),
-                        sum(ing['cost'] for ing in ingredients)
-                    ])
-                self.recipe_store.set_sort_column_id(0, Gtk.SortType.ASCENDING)
-                
-                self.reload_ingredients()
-                
-                selection = self.recipe_tree.get_selection()
-                model, treeiter = selection.get_selected()
-                if treeiter is not None:
-                    self.on_recipe_selected(selection)
-                    
-        except Exception as e:
-            print(f"Error reloading recipes from {recipes_path}: {e}")
-
-    def reload_ingredients(self):
-        """Reload ingredients from file and refresh the ingredient_combo"""
-        try:
-            ingredients_path = os.path.join(self.db_dir, 'ingredients.json')
-            with open(ingredients_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                self.ingredients_data = data['ingredients']
-                self._populate_ingredient_combo()
-        except Exception as e:
-            print(f"Error reloading ingredients from {ingredients_path}: {e}")
-
-    def _load_recipes(self):
-        """Load recipes from file during initialization"""
-        try:
-            recipes_path = os.path.join(self.db_dir, 'recipes.json')
-            with open(recipes_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                self.recipes_data = data['recipes']
-                for recipe in sorted(data['recipes'], key=lambda x: x['name'].lower()):
-                    ingredients = recipe['ingredients']
-                    self.recipe_store.append([
-                        recipe['name'],
-                        sum(ing['gram'] for ing in ingredients),
-                        sum(ing['kcal'] for ing in ingredients),
-                        sum(ing['carbs'] for ing in ingredients),
-                        sum(ing['sugar'] for ing in ingredients),
-                        sum(ing['fat'] for ing in ingredients),
-                        sum(ing['protein'] for ing in ingredients),
-                        sum(ing['fiber'] for ing in ingredients),
-                        sum(ing['salt'] for ing in ingredients),
-                        sum(ing['cost'] for ing in ingredients)
-                    ])
-        except Exception as e:
-            print(f"Error loading recipes from {recipes_path}: {e}")
+    def _update_current_recipe(self):
+        if not self.current_recipe:
+            return
+            
+        recipe = next((r for r in self.recipes_data if r['name'] == self.current_recipe), None)
+        if not recipe:
+            return
+            
+        recipe['ingredients'] = []
+        for row in self.ingredient_store:
+            recipe['ingredients'].append({
+                'name': row[0],
+                'gram': row[1],
+                'kcal': row[2],
+                'carbs': row[3],
+                'sugar': row[4],
+                'fat': row[5],
+                'protein': row[6],
+                'fiber': row[7],
+                'salt': row[8],
+                'cost': row[9]
+            })
+        
+        self._update_recipe_store()
 
     def _on_add_ingredient_clicked(self, widget):
-        ingredient_name = self.ingredient_combo.get_active_text()
-        if not ingredient_name:
-            self._show_error("No ingredient selected")
-            return
+        dialog = AddIngredientDialog(self.get_toplevel(), self.ingredients_data)
+        response = dialog.run()
+        
+        if response == Gtk.ResponseType.OK:
+            ingredient_name = dialog.ingredient_name
+            gram = dialog.gram
+            
+            ingredient = next((i for i in self.ingredients_data if i['name'] == ingredient_name), None)
+            if not ingredient:
+                return
 
-        gram_text = self.gram_entry.get_text().strip()
-        if not gram_text:
-            self._show_error("No weight specified for ingredient")
-            return
-
-        try:
-            gram = float(gram_text)
-        except ValueError:
-            self._show_error("Invalid weight value")
-            return
-
-        ingredient = next((i for i in self.ingredients_data if i['name'] == ingredient_name), None)
-        if not ingredient:
-            return
-
-        factor = gram / 100
-        self.ingredient_store.append([
-            ingredient['name'],
-            gram,
-            ingredient['kcal'] * factor,
-            ingredient['carbs'] * factor,
-            ingredient['sugar'] * factor,
-            ingredient['fat'] * factor,
-            ingredient['protein'] * factor,
-            ingredient['fiber'] * factor,
-            ingredient['salt'] * factor,
-            ingredient['cost'] * factor
-        ])
-        self.ingredient_store.set_sort_column_id(0, Gtk.SortType.ASCENDING)
-        self._update_per_portion_values()
+            factor = gram / 100
+            self.ingredient_store.append([
+                ingredient['name'],
+                gram,
+                ingredient['kcal'] * factor,
+                ingredient['carbs'] * factor,
+                ingredient['sugar'] * factor,
+                ingredient['fat'] * factor,
+                ingredient['protein'] * factor,
+                ingredient['fiber'] * factor,
+                ingredient['salt'] * factor,
+                ingredient['cost'] * factor
+            ])
+            self.ingredient_store.set_sort_column_id(0, Gtk.SortType.ASCENDING)
+            self._update_per_portion_values()
+            self._update_current_recipe()
 
     def _on_delete_ingredient_clicked(self, widget):
         selection = self.ingredient_tree.get_selection()
@@ -377,6 +499,7 @@ class RecipesTab(Gtk.Box):
             return
         model.remove(treeiter)
         self._update_per_portion_values()
+        self._update_current_recipe()
 
     def _update_per_portion_values(self):
         try:
@@ -510,21 +633,9 @@ class RecipesTab(Gtk.Box):
                 'instructions': instructions
             })
             
-            self.recipe_store.append([
-                recipe_name,
-                sum(ing['gram'] for ing in ingredients),
-                sum(ing['kcal'] for ing in ingredients),
-                sum(ing['carbs'] for ing in ingredients),
-                sum(ing['sugar'] for ing in ingredients),
-                sum(ing['fat'] for ing in ingredients),
-                sum(ing['protein'] for ing in ingredients),
-                sum(ing['fiber'] for ing in ingredients),
-                sum(ing['salt'] for ing in ingredients),
-                sum(ing['cost'] for ing in ingredients)
-            ])
-            self.recipe_store.set_sort_column_id(0, Gtk.SortType.ASCENDING)
-        
         self._save_recipes_to_file()
+        self._update_recipe_store()
+        self.current_recipe = recipe_name
 
     def _save_recipes_to_file(self):
         try:
@@ -537,18 +648,13 @@ class RecipesTab(Gtk.Box):
             self._show_error("Error saving recipes", str(e))
 
     def _on_new_recipe_clicked(self, widget):
-        selection = self.recipe_tree.get_selection()
-        selection.unselect_all()
-        
+        self.current_recipe = None
         self.ingredient_store.clear()
-        
         self.recipe_name_entry.set_text("")
         self.portions_entry.set_text("")
         self.portions_entry.set_placeholder_text("Pts.")
-        
         buffer = self.instructions.get_buffer()
         buffer.set_text("")
-        
         columns = self.header_tree.get_columns()
         for i in range(1, len(columns)):
             columns[i].set_title("")
@@ -589,49 +695,6 @@ class RecipesTab(Gtk.Box):
                     columns[col_index].set_title(formatted)
                 except Exception:
                     columns[col_index].set_title(str(value))
-
-    def on_recipe_selected(self, selection):
-        model, treeiter = selection.get_selected()
-        if treeiter is not None:
-            recipe_name = model[treeiter][0]
-            for recipe in self.recipes_data:
-                if recipe['name'] == recipe_name:
-                    self.recipe_name_entry.set_text(recipe['name'])
-                    portions = recipe.get('portions', 1)
-                    self.portions_entry.set_text(str(portions) if portions != 1 else "")
-                    self.portions_entry.set_placeholder_text("Pts.")
-                    
-                    buffer = self.instructions.get_buffer()
-                    buffer.set_text(recipe.get('instructions', ''))
-                    
-                    self.ingredient_store.clear()
-                    totals = [0]*9
-                    for ingredient in recipe['ingredients']:
-                        self.ingredient_store.append([
-                            ingredient['name'],
-                            ingredient['gram'],
-                            ingredient['kcal'],
-                            ingredient['carbs'],
-                            ingredient['sugar'],
-                            ingredient['fat'],
-                            ingredient['protein'],
-                            ingredient['fiber'],
-                            ingredient['salt'],
-                            ingredient['cost']
-                        ])
-                        totals[0] += ingredient['gram']
-                        totals[1] += ingredient['kcal']
-                        totals[2] += ingredient['carbs']
-                        totals[3] += ingredient['sugar']
-                        totals[4] += ingredient['fat']
-                        totals[5] += ingredient['protein']
-                        totals[6] += ingredient['fiber']
-                        totals[7] += ingredient['salt']
-                        totals[8] += ingredient['cost']
-                    
-                    per_portion_values = [t/portions for t in totals]
-                    self._update_header_columns(per_portion_values)
-                    break
 
     def _create_columns(self, treeview, columns, sortable=False):
         treeview.proportions = []
