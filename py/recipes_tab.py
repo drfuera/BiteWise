@@ -157,6 +157,13 @@ class RecipesTab(Gtk.Box):
         except Exception as e:
             print(f"Error loading ingredients from {ingredients_path}: {e}")
 
+    def reload_ingredients(self):
+        """Reload ingredients data from file and refresh any dependent views"""
+        self._load_ingredients()
+        # If a recipe is currently loaded, refresh its ingredient data
+        if self.current_recipe:
+            self._load_recipe_details(self.current_recipe)
+
     def _load_recipes(self):
         try:
             recipes_path = os.path.join(self.db_dir, 'recipes.json')
