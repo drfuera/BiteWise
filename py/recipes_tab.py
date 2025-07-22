@@ -2,6 +2,8 @@ import gi
 import json
 import os
 import sys
+import base64
+import zlib
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GdkPixbuf
 
@@ -143,20 +145,18 @@ class ScaleRecipeDialog(Gtk.Dialog):
             
         self.treeview = Gtk.TreeView(model=self.ingredient_store)
         
-        # Ingredients column (expands to fill available space)
         renderer = Gtk.CellRendererText()
         renderer.connect("edited", self.on_ingredient_edited)
         ingredients_column = Gtk.TreeViewColumn("Ingredient", renderer, text=0)
-        ingredients_column.set_expand(True)  # Make this column expandable
+        ingredients_column.set_expand(True)
         ingredients_column.set_sizing(Gtk.TreeViewColumnSizing.AUTOSIZE)
         self.treeview.append_column(ingredients_column)
         
-        # Weight column (fixed width)
         renderer = Gtk.CellRendererText()
         renderer.set_property("editable", True)
         renderer.connect("edited", self.on_weight_edited)
         weight_column = Gtk.TreeViewColumn("Weight (g)", renderer, text=1)
-        weight_column.set_fixed_width(100)  # Fixed width for weight column
+        weight_column.set_fixed_width(100)
         weight_column.set_sizing(Gtk.TreeViewColumnSizing.FIXED)
         weight_column.set_cell_data_func(renderer, self.format_weight)
         self.treeview.append_column(weight_column)
@@ -166,7 +166,6 @@ class ScaleRecipeDialog(Gtk.Dialog):
         scrolled.add(self.treeview)
         content_area.pack_start(scrolled, True, True, 0)
         
-        # Portions row - right aligned with narrow input
         portions_box = Gtk.Box(spacing=10)
         portions_box.set_halign(Gtk.Align.END)
         content_area.pack_start(portions_box, False, False, 0)
@@ -183,7 +182,6 @@ class ScaleRecipeDialog(Gtk.Dialog):
         self.portions_entry.connect("changed", self.on_portions_changed)
         portions_box.pack_start(self.portions_entry, False, False, 0)
         
-        # Button box with reversed order and natural widths
         button_box = Gtk.Box(spacing=10)
         button_box.set_homogeneous(False)
         content_area.pack_start(button_box, False, False, 0)
@@ -192,7 +190,7 @@ class ScaleRecipeDialog(Gtk.Dialog):
         close_button.connect("clicked", lambda b: self.destroy())
         button_box.pack_start(close_button, False, False, 0)
         
-        button_box.pack_start(Gtk.Box(), True, True, 0)  # Spacer
+        button_box.pack_start(Gtk.Box(), True, True, 0)
         
         copy_button = Gtk.Button(label="Copy to Clipboard")
         copy_button.connect("clicked", self.on_copy_clicked)
@@ -276,6 +274,78 @@ class ScaleRecipeDialog(Gtk.Dialog):
             message_type=Gtk.MessageType.INFO,
             buttons=Gtk.ButtonsType.OK,
             text=message
+        )
+        dialog.run()
+        dialog.destroy()
+
+class ImportRecipeDialog(Gtk.Dialog):
+    def __init__(self, parent):
+        super().__init__(title="Import Recipe", transient_for=parent, modal=True)
+        self.set_default_size(500, 200)
+        
+        content_area = self.get_content_area()
+        content_area.set_spacing(10)
+        content_area.set_margin_top(10)
+        content_area.set_margin_bottom(10)
+        content_area.set_margin_start(10)
+        content_area.set_margin_end(10)
+        
+        label = Gtk.Label(label="Paste the exported recipe string:")
+        content_area.pack_start(label, False, False, 0)
+        
+        self.text_view = Gtk.TextView()
+        self.text_view.set_wrap_mode(Gtk.WrapMode.WORD)
+        self.text_view.set_left_margin(5)
+        self.text_view.set_right_margin(5)
+        
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scrolled.add(self.text_view)
+        content_area.pack_start(scrolled, True, True, 0)
+        
+        button_box = Gtk.Box(spacing=10)
+        content_area.pack_start(button_box, False, False, 0)
+        
+        cancel_button = Gtk.Button(label="Cancel")
+        cancel_button.connect("clicked", lambda b: self.destroy())
+        button_box.pack_start(cancel_button, False, False, 0)
+        
+        button_box.pack_start(Gtk.Box(), True, True, 0)
+        
+        import_button = Gtk.Button(label="Import")
+        import_button.connect("clicked", self.on_import_clicked)
+        button_box.pack_start(import_button, False, False, 0)
+        
+        self.show_all()
+
+    def on_import_clicked(self, widget):
+        buffer = self.text_view.get_buffer()
+        start_iter = buffer.get_start_iter()
+        end_iter = buffer.get_end_iter()
+        recipe_str = buffer.get_text(start_iter, end_iter, False).strip()
+        
+        if not recipe_str:
+            self._show_error("No recipe data provided")
+            return
+            
+        try:
+            compressed_data = base64.b64decode(recipe_str.encode('utf-8'))
+            json_data = zlib.decompress(compressed_data).decode('utf-8')
+            recipe_data = json.loads(json_data)
+            self.recipe_data = recipe_data
+            self.response(Gtk.ResponseType.OK)
+            self.destroy()
+        except Exception as e:
+            self._show_error("Invalid recipe data", str(e))
+
+    def _show_error(self, message, secondary_text=None):
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text=message,
+            secondary_text=secondary_text
         )
         dialog.run()
         dialog.destroy()
@@ -373,19 +443,24 @@ class RecipesTab(Gtk.Box):
         button_box = Gtk.Box(spacing=10)
         self.pack_start(button_box, False, False, 0)
         
-        self.delete_btn = Gtk.Button(label="Delete Recipe")
-        self.new_btn = Gtk.Button(label="New Recipe")
-        self.copy_btn = Gtk.Button(label="Copy Recipe")
-        self.scale_btn = Gtk.Button(label="Scale Recipe")
-        self.save_btn = Gtk.Button(label="Save Recipe")
+        self.delete_btn = Gtk.Button(label="🗑️ Delete Recipe")
+        self.new_btn = Gtk.Button(label="🆕 New Recipe")
+        self.import_btn = Gtk.Button(label="⬇️ Import Recipe")
+        self.export_btn = Gtk.Button(label="⬆️ Export Recipe")
+        self.copy_btn = Gtk.Button(label="⎘ Copy Recipe")
+        self.scale_btn = Gtk.Button(label="⚖️ Scale Recipe")
+        self.save_btn = Gtk.Button(label="💾 Save Recipe")
         
         self.delete_btn.connect("clicked", self._on_delete_recipe_clicked)
         self.new_btn.connect("clicked", self._on_new_recipe_clicked)
+        self.import_btn.connect("clicked", self._on_import_recipe_clicked)
+        self.export_btn.connect("clicked", self._on_export_recipe_clicked)
         self.copy_btn.connect("clicked", self._on_copy_recipe_clicked)
         self.scale_btn.connect("clicked", self._on_scale_recipe_clicked)
         self.save_btn.connect("clicked", self._on_save_recipe_clicked)
         
-        for btn in [self.delete_btn, self.new_btn, self.copy_btn, self.scale_btn, self.save_btn]:
+        for btn in [self.delete_btn, self.new_btn, self.import_btn, self.export_btn, 
+                   self.copy_btn, self.scale_btn, self.save_btn]:
             button_box.pack_start(btn, True, True, 0)
 
         self.lower_container = Gtk.HPaned()
@@ -439,11 +514,11 @@ class RecipesTab(Gtk.Box):
         control_box.set_margin_end(5)
         control_box.set_margin_bottom(5)
         
-        self.delete_ingredient_btn = Gtk.Button(label="Delete Ingredient")
+        self.delete_ingredient_btn = Gtk.Button(label="🗑️ Delete Ingredient")
         self.delete_ingredient_btn.connect("clicked", self._on_delete_ingredient_clicked)
         control_box.pack_start(self.delete_ingredient_btn, False, False, 0)
         
-        self.add_ingredient_btn = Gtk.Button(label="Add Ingredient")
+        self.add_ingredient_btn = Gtk.Button(label="➕ Add Ingredient")
         self.add_ingredient_btn.connect("clicked", self._on_add_ingredient_clicked)
         control_box.pack_end(self.add_ingredient_btn, False, False, 0)
         
@@ -526,10 +601,70 @@ class RecipesTab(Gtk.Box):
         dialog.instructions = instructions
         dialog.run()
 
+    def _on_import_recipe_clicked(self, widget):
+        dialog = ImportRecipeDialog(self.get_toplevel())
+        response = dialog.run()
+        
+        if response == Gtk.ResponseType.OK:
+            try:
+                recipe_data = dialog.recipe_data
+                if not isinstance(recipe_data, dict):
+                    raise ValueError("Invalid recipe format")
+                
+                if 'name' not in recipe_data or 'ingredients' not in recipe_data:
+                    raise ValueError("Recipe must have name and ingredients")
+                
+                recipe_name = recipe_data['name']
+                if any(r['name'] == recipe_name for r in self.recipes_data):
+                    recipe_name = f"{recipe_name} (Imported)"
+                    recipe_data['name'] = recipe_name
+                
+                self.recipes_data.append(recipe_data)
+                self._update_recipe_store()
+                self._load_recipe_details(recipe_name)
+                self._show_message(f"Recipe '{recipe_name}' imported successfully")
+            except Exception as e:
+                self._show_error("Failed to import recipe", str(e))
+
+    def _on_export_recipe_clicked(self, widget):
+        if not self.current_recipe:
+            self._show_error("No recipe selected")
+            return
+            
+        recipe = next((r for r in self.recipes_data if r['name'] == self.current_recipe), None)
+        if not recipe:
+            self._show_error("Recipe not found")
+            return
+            
+        try:
+            buffer = self.instructions.get_buffer()
+            start_iter = buffer.get_start_iter()
+            end_iter = buffer.get_end_iter()
+            instructions = buffer.get_text(start_iter, end_iter, False)
+            
+            recipe_data = {
+                'name': recipe['name'],
+                'portions': int(self.portions_entry.get_text().strip()) if self.portions_entry.get_text().strip() else 1,
+                'ingredients': recipe['ingredients'],
+                'instructions': instructions
+            }
+            
+            json_data = json.dumps(recipe_data, ensure_ascii=False)
+            compressed_data = zlib.compress(json_data.encode('utf-8'))
+            base64_str = base64.b64encode(compressed_data).decode('utf-8')
+            
+            clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+            clipboard.set_text(base64_str, -1)
+            clipboard.store()
+            
+            self._show_message("Export data copied to clipboard")
+        except Exception as e:
+            self._show_error("Failed to export recipe", str(e))
+
     def _update_button_states(self):
         state = self.current_recipe is not None
         for btn in [self.delete_btn, self.copy_btn, self.scale_btn, self.save_btn, 
-                   self.add_ingredient_btn, self.delete_ingredient_btn]:
+                   self.add_ingredient_btn, self.delete_ingredient_btn, self.export_btn]:
             btn.set_sensitive(state)
 
     def on_recipe_activated(self, treeview, path, column):
@@ -723,20 +858,44 @@ class RecipesTab(Gtk.Box):
         if not recipe_name:
             return
 
+        # Get portions (default to 1 if empty)
+        portions_text = self.portions_entry.get_text().strip()
+        portions = int(portions_text) if portions_text else 1
+
+        # Get instructions
         buffer = self.instructions.get_buffer()
         start_iter = buffer.get_start_iter()
         end_iter = buffer.get_end_iter()
         instructions = buffer.get_text(start_iter, end_iter, False)
 
+        # Build ingredients text
         ingredients_text = ""
         for row in self.ingredient_store:
-            ingredients_text += f"{row[1]}g {row[0]}\n"
+            ingredients_text += f"{row[1]:.1f}g {row[0]}\n"
 
-        clipboard_text = f"{recipe_name}\n\n{ingredients_text}\n{instructions}"
+        # Format the full recipe text
+        clipboard_text = (
+            f"=== {recipe_name} ===\n"
+            f"Portions: {portions}\n\n"
+            f"Ingredients:\n{ingredients_text}\n"
+            f"Instructions:\n{instructions}"
+        )
 
+        # Copy to clipboard
         clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
         clipboard.set_text(clipboard_text, -1)
         clipboard.store()
+
+        # Show confirmation dialog
+        dialog = Gtk.MessageDialog(
+            transient_for=self.get_toplevel(),
+            flags=0,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text="Recipe copied to clipboard"
+        )
+        dialog.run()
+        dialog.destroy()
 
     def _on_portions_changed(self, entry):
         text = entry.get_text()
@@ -981,6 +1140,17 @@ class RecipesTab(Gtk.Box):
             buttons=Gtk.ButtonsType.OK,
             text=text,
             secondary_text=secondary_text
+        )
+        dialog.run()
+        dialog.destroy()
+
+    def _show_message(self, message):
+        dialog = Gtk.MessageDialog(
+            transient_for=self.get_toplevel(),
+            flags=0,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text=message
         )
         dialog.run()
         dialog.destroy()
